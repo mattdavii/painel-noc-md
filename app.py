@@ -15,7 +15,7 @@ def authenticate():
 
 @app.before_request
 def require_auth():
-    if request.path in ['/api/receber_dados', '/api/receber_scan']:
+    if request.path in ['/api/receber_dados', '/api/receber_scan', '/manifest.json', '/sw.js']:
         return
     
     auth = request.authorization
@@ -28,19 +28,15 @@ def require_auth():
 sensores_conectados = {}
 comandos_pendentes = {} 
 resultados_scan = {}
-eventos_criticos = [] # NOVO: Armazena o histórico global de falhas
+eventos_criticos = [] 
 
 def registrar_alerta(sensor_id, msg, level="warning"):
-    """Registra um alerta no painel global sem fazer spam da mesma mensagem repetida."""
-    # Pega o último alerta desse sensor
     ultimos_deste_sensor = [e for e in eventos_criticos if e["sensor_id"] == sensor_id]
     if ultimos_deste_sensor:
         ultimo_msg = ultimos_deste_sensor[-1]["msg"]
-        # Se a mensagem for exatamente igual à última, não registra de novo para não poluir
         if msg in ultimo_msg or ultimo_msg in msg:
             return
 
-    # Força o horário oficial do Brasil (UTC -3)
     hora_brasil = datetime.utcnow() - timedelta(hours=3)
 
     eventos_criticos.append({
@@ -50,7 +46,6 @@ def registrar_alerta(sensor_id, msg, level="warning"):
         "level": level
     })
     
-    # Mantém apenas os últimos 50 alertas globais na memória para não pesar o servidor
     if len(eventos_criticos) > 50:
         eventos_criticos.pop(0)
 
@@ -65,7 +60,6 @@ def receber_dados():
             "data": payload
         }
         
-        # --- VERIFICADOR DE EVENTOS CRÍTICOS ---
         diag = payload.get("diagnostics", "")
         if any(palavra in diag for palavra in ["LOOP", "FALHA", "SEM INTERNET", "INSTABILIDADE"]):
             nivel = "error" if "FALHA" in diag or "LOOP" in diag else "warning"
@@ -90,15 +84,14 @@ def get_sensores():
         if agora - s_data['last_ping'] < 15:
             ativos[s_id] = s_data
         else:
-            # SENSOR CAIU! (Parou de mandar dados há mais de 15 segundos)
-            registrar_alerta(s_id, f"🔴 SENSOR DESCONECTADO (Máquina desligada ou sem internet total).", "error")
+            registrar_alerta(s_id, f"🔴 SENSOR DESCONECTADO (Máquina desligada ou sem internet).", "error")
     
     sensores_conectados.clear()
     sensores_conectados.update(ativos)
     
     return jsonify({
         "sensores": sensores_conectados,
-        "alertas": list(reversed(eventos_criticos)) # Envia invertido (mais recente primeiro)
+        "alertas": list(reversed(eventos_criticos)) 
     })
 
 @app.route('/api/limpar_alertas', methods=['POST'])
@@ -134,6 +127,28 @@ def ler_scan():
         return jsonify({"status": "pronto", "devices": resultados_scan[sensor_id]})
     return jsonify({"status": "aguardando"})
 
+# --- ROTAS DO PWA ---
+@app.route('/manifest.json')
+def serve_manifest():
+    manifest = {
+        "name": "NOC Central - MD Soluções",
+        "short_name": "NOC MD",
+        "start_url": "/",
+        "display": "standalone",
+        "orientation": "any",  # PERMITE ROTAÇÃO PARA PAISAGEM / RETRATO
+        "background_color": "#1e1e2e",
+        "theme_color": "#89b4fa",
+        "icons": [{"src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iIzFlMWUyZSIvPjxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjQwIiBmaWxsPSJub25lIiBzdHJva2U9IiM4OWI0ZmEiIHN0cm9rZS13aWR0aD0iOCIvPjxwb2x5bGluZSBwb2ludHM9IjMwLDUwIDQ1LDY1IDcwLDM1IiBmaWxsPSJub25lIiBzdHJva2U9IiNhNmUzYTEiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+", "sizes": "192x192", "type": "image/svg+xml"}]
+    }
+    return jsonify(manifest)
+
+@app.route('/sw.js')
+def serve_sw():
+    sw_code = "self.addEventListener('install', (e) => { self.skipWaiting(); }); self.addEventListener('activate', (e) => { e.waitUntil(clients.claim()); }); self.addEventListener('fetch', (e) => { e.respondWith(fetch(e.request)); });"
+    response = make_response(sw_code)
+    response.headers['Content-Type'] = 'application/javascript'
+    return response
+
 # --- FRONT-END CENTRAL ---
 @app.route('/')
 def dashboard():
@@ -142,20 +157,31 @@ def dashboard():
     <html lang="pt-BR">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Network Analyzer PRO - Central</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <title>NOC Central - MD Soluções</title>
+        
+        <link rel="manifest" href="/manifest.json">
+        <meta name="theme-color" content="#89b4fa">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+        <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iIzFlMWUyZSIvPjxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjQwIiBmaWxsPSJub25lIiBzdHJva2U9IiM4OWI0ZmEiIHN0cm9rZS13aWR0aD0iOCIvPjxwb2x5bGluZSBwb2ludHM9IjMwLDUwIDQ1LDY1IDcwLDM1IiBmaWxsPSJub25lIiBzdHJva2U9IiNhNmUzYTEiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+">
+        
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
             body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e2e; color: #cdd6f4; margin: 0; padding: 20px; }}
             .noc-layout {{ display: grid; grid-template-columns: 3fr 1fr; gap: 20px; max-width: 1500px; margin: 0 auto; align-items: start;}}
             .main-panel {{ background: #313244; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }}
             .side-panel {{ background: #1e1e2e; display: flex; flex-direction: column; gap: 15px; position: sticky; top: 15px; align-self: start; }}
-            @media (max-width: 900px) {{ .noc-layout {{ grid-template-columns: 1fr; }} .side-panel {{ position: static; }} }}
+            
+            /* CSS Responsivo Otimizado para Paisagem/Retrato */
+            @media (max-width: 900px) {{ 
+                .noc-layout {{ grid-template-columns: 1fr; }} 
+                .side-panel {{ position: static; }} 
+            }}
             
             h1 {{ color: #89b4fa; text-align: center; margin-top: 0; }}
             .brand-header {{ text-align: center; font-size: 0.75em; color: #6c7086; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 5px; font-weight: bold; }}
             
-            /* --- ESTILOS DO NOVO PAINEL DE ALERTAS GLOBAIS --- */
             .global-alerts-container {{ background: #181825; border-left: 4px solid #f38ba8; padding: 15px; border-radius: 8px; margin-bottom: 20px; max-height: 250px; overflow-y: auto; }}
             .alerts-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }}
             .btn-clear-alerts {{ background: #45475a; color: #cdd6f4; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8em; }}
@@ -166,10 +192,10 @@ def dashboard():
             .alert-error {{ color: #f38ba8; font-weight: bold; }}
             .alert-warning {{ color: #f9e2af; font-weight: bold; }}
             .sensor-badge {{ background: #313244; padding: 3px 8px; border-radius: 4px; color: #89b4fa; font-family: monospace; font-size: 0.9em; }}
-            /* ------------------------------------------------ */
             
             .selector-container {{ background: #181825; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; border: 2px solid #a6e3a1; display:flex; justify-content: space-between; align-items: center;}}
             select {{ padding: 10px; font-size: 1.1em; border-radius: 4px; background: #1e1e2e; color: #a6e3a1; font-weight: bold; border: 1px solid #45475a; min-width: 300px; cursor: pointer; flex: 1; margin: 0 15px;}}
+            @media (max-width: 600px) {{ .selector-container {{ flex-direction: column; gap: 10px; }} select {{ width: 100%; margin: 0; }} }}
             
             .status-box {{ padding: 15px; margin: 15px 0; border-radius: 5px; font-weight: bold; text-align: center; font-size: 1.1em;}}
             .ok {{ background-color: #a6e3a1; color: #1e1e2e; }}
@@ -203,10 +229,39 @@ def dashboard():
             
             .input-group {{ display: flex; flex-direction: column; flex: 1; min-width: 150px; text-align:left;}}
             .input-group label {{ margin-bottom: 5px; font-size: 0.85em; color: #bac2de; font-weight: bold;}}
-            input[type="text"] {{ padding: 8px; border: 1px solid #45475a; border-radius: 4px; background: #1e1e2e; color: #cdd6f4; width: 95%;}}
+            input[type="text"] {{ padding: 8px; border: 1px solid #45475a; border-radius: 4px; background: #1e1e2e; color: #cdd6f4; width: 95%; box-sizing: border-box;}}
+
+            /* --- ESTILOS DO POP-UP DE INSTALAÇÃO DO PWA --- */
+            .pwa-popup {{
+                display: none;
+                position: fixed;
+                bottom: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: #313244;
+                padding: 20px;
+                border-radius: 12px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+                border: 2px solid #89b4fa;
+                z-index: 9999;
+                text-align: center;
+                width: 90%;
+                max-width: 400px;
+            }}
+            .pwa-popup p {{ margin: 0 0 15px 0; color: #cdd6f4; font-weight: bold; font-size: 1.1em; }}
+            .btn-install-pwa {{ background: #a6e3a1; color: #1e1e2e; width: 48%; margin: 0; }}
+            .btn-close-pwa {{ background: #45475a; color: #cdd6f4; width: 48%; margin: 0; }}
         </style>
     </head>
     <body>
+        <div id="pwa-install-popup" class="pwa-popup">
+            <p>📲 Deseja instalar o NOC Central no seu celular?</p>
+            <div style="display: flex; justify-content: space-between;">
+                <button id="btn-close-pwa" class="btn-close-pwa">Agora Não</button>
+                <button id="btn-install-pwa" class="btn-install-pwa">Instalar App</button>
+            </div>
+        </div>
+
         <div id="scanner-modal">
             <div class="modal-content">
                 <span class="close-btn" onclick="document.getElementById('scanner-modal').style.display='none'">✖ Fechar</span>
@@ -218,15 +273,15 @@ def dashboard():
         <div class="noc-layout">
             <div class="main-panel">
                 <div class="brand-header">MD Soluções Tecnológicas</div>
-                <h1>🌐 Network Analyzer PRO - Central</h1>
+                <h1>🌐 NOC Central (Master)</h1>
                 
                 <div class="global-alerts-container">
                     <div class="alerts-header">
-                        <h3 style="margin: 0; color: #f38ba8;">🚨 Eventos Críticos da Rede (Radar Global)</h3>
+                        <h3 style="margin: 0; color: #f38ba8; font-size:1.1em;">🚨 Radar Global</h3>
                         <button id="btn-clear-alerts" class="btn-clear-alerts" onclick="limparAlertasGlobais()" style="display:none; width:auto; margin:0;">Varrer Histórico</button>
                     </div>
                     <table class="alert-table">
-                        <thead><tr><th style="width: 15%;">Hora</th><th style="width: 25%;">Máquina / Sensor</th><th>Descrição do Incidente</th></tr></thead>
+                        <thead><tr><th style="width: 25%;">Hora</th><th style="width: 25%;">Máquina</th><th>Incidente</th></tr></thead>
                         <tbody id="global-alerts-body">
                             <tr><td colspan="3" style="text-align:center; color:#6c7086;">Nenhuma falha detectada recentemente. Rede estável.</td></tr>
                         </tbody>
@@ -245,54 +300,94 @@ def dashboard():
                 <div id="dashboard-content" style="display:none;">
                     
                     <div id="admin-config-panel" style="background: #181825; padding: 15px; border-radius: 8px; margin-bottom: 20px; display:none;">
-                        <h4 style="margin: 0 0 15px 0; color:#89b4fa;">⚙️ Alterar Configurações do Sensor Remotamente</h4>
-                        <div style="display: flex; gap: 15px; align-items: flex-end;">
+                        <h4 style="margin: 0 0 15px 0; color:#89b4fa;">⚙️ Alterar Configurações Remotamente</h4>
+                        <div style="display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
                             <div class="input-group">
-                                <label>IP do Gateway / Roteador</label>
+                                <label>Gateway / Roteador</label>
                                 <input type="text" id="remote-router" placeholder="Ex: 192.168.0.1">
                             </div>
                             <div class="input-group" style="flex:2;">
-                                <label>Alvos a Monitorar (Separados por vírgula)</label>
+                                <label>Alvos a Monitorar</label>
                                 <input type="text" id="remote-externals" placeholder="Ex: google.com, 8.8.8.8">
                             </div>
-                            <button class="btn-save" onclick="enviarNovaConfig()" style="width: auto; margin-bottom:0;">💾 Aplicar no Sensor</button>
+                            <button class="btn-save" onclick="enviarNovaConfig()" style="width: 100%; margin-bottom:0; margin-top: 10px;">💾 Aplicar</button>
                         </div>
                     </div>
 
                     <div id="diag-box" class="status-box ok">Conectando...</div>
                     <div class="targets-grid" id="targets-container"></div>
-                    <h4 style="color:#bac2de; margin-bottom: 5px;">Latências da Rede Local do Sensor</h4>
+                    <h4 style="color:#bac2de; margin-bottom: 5px;">Latências da Rede Local</h4>
                     <div class="chart-container"><canvas id="mainChart"></canvas></div>
                 </div>
             </div>
             
             <div class="side-panel" id="sidebar-container" style="display:none;">
                 <div id="admin-c2-panel" class="global-card" style="border-left-color: #f9e2af; display:none; margin-bottom: 15px;">
-                    <h4 style="margin: 0 0 10px 0; color:#cdd6f4; text-align:center;">Comandos Remotos (C2)</h4>
+                    <h4 style="margin: 0 0 10px 0; color:#cdd6f4; text-align:center;">Comandos (C2)</h4>
                     <button class="btn-scan" onclick="enviarComando('SCAN')">🔍 Escanear Rede Local</button>
                     <button class="btn-danger" onclick="confirmarDesinstalacao()">🗑️ Auto-Destruir Sensor</button>
                 </div>
                 
                 <h3 style="color: #bac2de; margin-bottom: 0; text-align:center;">🌐 Tráfego Global</h3>
-                <p style="font-size: 0.8em; text-align: center; color: #6c7086; margin-top:0;">Visão a partir do cliente</p>
+                <p style="font-size: 0.8em; text-align: center; color: #6c7086; margin-top:0;">Visão do cliente</p>
                 <div id="globals-container"></div>
             </div>
         </div>
 
         <script>
+            // --- REGISTRO DO SERVICE WORKER E POP-UP DE INSTALAÇÃO (PWA) ---
+            let deferredPrompt;
+            const pwaPopup = document.getElementById('pwa-install-popup');
+            const btnInstallPwa = document.getElementById('btn-install-pwa');
+            const btnClosePwa = document.getElementById('btn-close-pwa');
+
+            if ('serviceWorker' in navigator) {{
+                window.addEventListener('load', () => {{
+                    navigator.serviceWorker.register('/sw.js').catch(err => console.error(err));
+                }});
+            }}
+
+            window.addEventListener('beforeinstallprompt', (e) => {{
+                // Previne o Chrome de mostrar a barra feia de instalação embaixo
+                e.preventDefault();
+                // Salva o evento para acionar o Pop-up nativo depois
+                deferredPrompt = e;
+                // Mostra o nosso Pop-Up personalizado da MD Soluções
+                pwaPopup.style.display = 'block';
+            }});
+
+            btnClosePwa.addEventListener('click', () => {{
+                pwaPopup.style.display = 'none';
+            }});
+
+            btnInstallPwa.addEventListener('click', async () => {{
+                pwaPopup.style.display = 'none';
+                if (deferredPrompt) {{
+                    deferredPrompt.prompt(); // Abre a telinha oficial do Celular/Chrome pedindo pra instalar
+                    const {{ outcome }} = await deferredPrompt.userChoice;
+                    deferredPrompt = null;
+                }}
+            }});
+
+            window.addEventListener('appinstalled', () => {{
+                pwaPopup.style.display = 'none';
+                console.log('App da MD instalado com sucesso!');
+            }});
+
+            // --- LÓGICA DO DASHBOARD ---
             const userRole = "{request.user_role}"; 
             let currentSensor = ""; let mainChart = null; let scanInterval = null;
             const colorPalette = ['#89b4fa', '#f9e2af', '#cba6f7', '#94e2d5', '#fab387', '#f38ba8'];
 
             window.onload = () => {{
                 if(userRole === "admin") {{
-                    document.getElementById('role-badge').innerText = "👨‍💻 MODO ADMIN";
+                    document.getElementById('role-badge').innerText = "👨‍💻 ADMIN";
                     document.getElementById('role-badge').style.color = "#a6e3a1";
                     document.getElementById('admin-config-panel').style.display = "block";
                     document.getElementById('admin-c2-panel').style.display = "block";
                     document.getElementById('btn-clear-alerts').style.display = "block";
                 }} else {{
-                    document.getElementById('role-badge').innerText = "👁️ MODO VISUALIZADOR";
+                    document.getElementById('role-badge').innerText = "👁️ VIEWER";
                     document.getElementById('role-badge').style.color = "#f9e2af";
                 }}
             }};
@@ -338,11 +433,11 @@ def dashboard():
                     headers: {{'Content-Type': 'application/json'}}, 
                     body: JSON.stringify({{sensor_id: currentSensor, comando: "UPDATE_CONFIG", router_ip: r_ip, external_targets: e_tg}}) 
                 }});
-                alert("Ordem de Reconfiguração enviada! O Sensor aplicará as mudanças em instantes.");
+                alert("Ordem enviada! Sensor aplicará em instantes.");
             }}
 
             function confirmarDesinstalacao() {{
-                if(confirm("⚠️ ATENÇÃO EXTREMA!\\n\\nIsso fará o executável se APAGAR PERMANENTEMENTE da máquina do cliente.\\n\\nDeseja explodir o sensor remotamente?")) {{
+                if(confirm("⚠️ ATENÇÃO EXTREMA!\\n\\nO executável irá se APAGAR PERMANENTEMENTE do cliente.\\n\\nDeseja explodir o sensor remotamente?")) {{
                     enviarComando('UNINSTALL');
                     alert("Ordem de Auto-destruição enviada.");
                 }}
@@ -359,7 +454,7 @@ def dashboard():
                     clearInterval(scanInterval);
                     let html = `<table><thead><tr><th>IP Encontrado</th><th>Hostname</th></tr></thead><tbody>`;
                     data.devices.forEach(d => html += `<tr><td style="color:#a6e3a1; font-weight:bold;">${{d.ip}}</td><td>${{d.hostname}}</td></tr>`);
-                    html += `</tbody></table><p style="text-align:right; font-size:0.8em; color:#a6adc8;">Total: ${{data.devices.length}} dispositivos.</p>`;
+                    html += `</tbody></table><p style="text-align:right; font-size:0.8em; color:#a6adc8;">Total: ${{data.devices.length}} disp.</p>`;
                     document.getElementById('scanner-results').innerHTML = html;
                 }}
             }}
@@ -369,13 +464,12 @@ def dashboard():
                     const res = await fetch('/api/sensores');
                     const masterData = await res.json();
                     
-                    const sensores_dados = masterData.sensores;
-                    const alertas_dados = masterData.alertas;
+                    const sensores_dados = masterData.sensores || {{}};
+                    const alertas_dados = masterData.alertas || [];
                     
-                    // 1. ATUALIZA A TABELA DE ALERTAS GLOBAIS
                     const alertasTbody = document.getElementById('global-alerts-body');
                     if(alertas_dados.length === 0) {{
-                        alertasTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#a6e3a1; font-weight:bold;">Tudo OK! Nenhuma falha detectada em seus clientes.</td></tr>';
+                        alertasTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#a6e3a1; font-weight:bold;">Tudo OK! Nenhuma falha detectada.</td></tr>';
                     }} else {{
                         alertasTbody.innerHTML = '';
                         alertas_dados.forEach(alerta => {{
@@ -388,17 +482,15 @@ def dashboard():
                         }});
                     }}
 
-                    // 2. ATUALIZA O SELETOR DE SENSORES
                     const select = document.getElementById('sensor-select');
                     const oldVal = select.value;
                     let optionsHTML = '<option value="">-- Selecione uma Máquina --</option>';
-                    for(const s_id in sensores_dados) optionsHTML += `<option value="${{s_id}}">🟢 Sensor Online: ${{s_id}}</option>`;
-                    if(Object.keys(sensores_dados).length === 0) optionsHTML = '<option value="">🔴 Nenhum sensor online na rede</option>';
+                    for(const s_id in sensores_dados) optionsHTML += `<option value="${{s_id}}">🟢 Online: ${{s_id}}</option>`;
+                    if(Object.keys(sensores_dados).length === 0) optionsHTML = '<option value="">🔴 Nenhum sensor online</option>';
                     
                     select.innerHTML = optionsHTML;
                     if(sensores_dados[oldVal]) select.value = oldVal; else currentSensor = "";
 
-                    // 3. ATUALIZA O GRÁFICO SE TIVER UM SENSOR SELECIONADO
                     if(currentSensor && sensores_dados[currentSensor]) {{
                         const sData = sensores_dados[currentSensor].data;
                         
@@ -454,5 +546,3 @@ def dashboard():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
-
-
