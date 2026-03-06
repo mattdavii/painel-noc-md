@@ -1,13 +1,19 @@
 from flask import Flask, jsonify, render_template_string, request, make_response
 from datetime import datetime, timedelta
 import time
+import threading
+import subprocess
+import re
+import socket
+import concurrent.futures
+import platform
 
 app = Flask(__name__)
 
 # --- SISTEMA DE LOGINS (RBAC) ---
 USUARIOS = {
-    "admin": {"senha": "100110Md.", "role": "admin"},
-    "cliente": {"senha": "cliente123", "role": "viewer"}
+    "admin": {"senha": "mdadmin2026", "role": "admin"},
+    "cliente": {"senha": "mdcliente2026", "role": "viewer"}
 }
 
 def authenticate():
@@ -17,11 +23,9 @@ def authenticate():
 def require_auth():
     if request.path in ['/api/receber_dados', '/api/receber_scan', '/manifest.json', '/sw.js']:
         return
-    
     auth = request.authorization
     if not auth or auth.username not in USUARIOS or USUARIOS[auth.username]["senha"] != auth.password:
         return authenticate()
-    
     request.user_role = USUARIOS[auth.username]["role"]
 
 # --- BANCO DE DADOS EM MEMÓRIA ---
@@ -34,37 +38,115 @@ def registrar_alerta(sensor_id, msg, level="warning"):
     ultimos_deste_sensor = [e for e in eventos_criticos if e["sensor_id"] == sensor_id]
     if ultimos_deste_sensor:
         ultimo_msg = ultimos_deste_sensor[-1]["msg"]
-        if msg in ultimo_msg or ultimo_msg in msg:
-            return
+        if msg in ultimo_msg or ultimo_msg in msg: return
 
     hora_brasil = datetime.utcnow() - timedelta(hours=3)
-
     eventos_criticos.append({
         "time": hora_brasil.strftime("%d/%m %H:%M:%S"),
         "sensor_id": sensor_id,
         "msg": msg,
         "level": level
     })
+    if len(eventos_criticos) > 50: eventos_criticos.pop(0)
+
+# =====================================================================
+# --- NOVO: MOTOR DO SENSOR VIRTUAL DA NUVEM (AGENTLESS) ---
+# =====================================================================
+CLOUD_CONFIG = {
+    "external_targets": ["google.com", "cloudflare.com"]
+}
+cloud_latency_history = []
+
+def ping_hibrido(target):
+    """ Tenta ICMP Ping. Se a nuvem bloquear, tenta TCP Ping (Porta 443/80) """
+    param = '-n' if platform.system().lower() == 'windows' else '-c'
+    command = ['ping', param, '1', '-w', '2', target] if platform.system().lower() == 'windows' else ['ping', param, '1', '-W', '2', target]
     
-    if len(eventos_criticos) > 50:
-        eventos_criticos.pop(0)
+    # 1. Tenta Ping ICMP Nativo
+    try:
+        output = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if output.returncode == 0:
+            match = re.search(r"(?:time|tempo)\s*[=<]\s*([0-9.]+)", output.stdout, re.IGNORECASE)
+            if match: return target, float(match.group(1))
+    except: pass
+    
+    # 2. Se ICMP falhou (bloqueio do Render), tenta TCP HTTPS
+    try:
+        start = time.time()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2.0)
+        sock.connect((target, 443))
+        sock.close()
+        ms = (time.time() - start) * 1000
+        return target, round(ms, 1)
+    except: pass
+    
+    # 3. Tenta TCP HTTP padrão
+    try:
+        start = time.time()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2.0)
+        sock.connect((target, 80))
+        sock.close()
+        ms = (time.time() - start) * 1000
+        return target, round(ms, 1)
+    except: return target, None
+
+def cloud_monitor_thread():
+    while True:
+        timestamp_full = datetime.utcnow() - timedelta(hours=3)
+        time_str = timestamp_full.strftime("%H:%M:%S")
+        
+        targets = CLOUD_CONFIG["external_targets"]
+        results = {}
+        
+        if targets:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                future_to_target = {executor.submit(ping_hibrido, t): t for t in targets}
+                for future in concurrent.futures.as_completed(future_to_target):
+                    t, ms = future.result()
+                    results[t] = ms
+            
+            cloud_latency_history.append({"time": time_str, "latencies": results})
+            if len(cloud_latency_history) > 20: cloud_latency_history.pop(0)
+
+            falhas = [t for t, ms in results.items() if ms is None]
+            diag = f"[{time_str}] Sensor Virtual Operando OK."
+            if len(falhas) == len(targets): diag = f"[{time_str}] FALHA: Servidor Virtual não alcança alvos."
+            elif falhas: diag = f"[{time_str}] INSTABILIDADE: Falha ao alcançar {', '.join(falhas)}."
+
+            # Injeta o próprio servidor como um sensor na lista
+            sensores_conectados["☁️ SERVIDOR NUVEM (Virtual)"] = {
+                "last_ping": time.time(),
+                "data": {
+                    "sensor_id": "☁️ SERVIDOR NUVEM (Virtual)",
+                    "diagnostics": diag,
+                    "current_latencies": results,
+                    "global_latencies": {},
+                    "global_targets": {},
+                    "latency_history": cloud_latency_history,
+                    "config": {
+                        "router_ip": "N/A (Nuvem)",
+                        "external_targets": targets
+                    }
+                }
+            }
+        time.sleep(2)
+
+# Inicia o motor virtual assim que o app liga
+threading.Thread(target=cloud_monitor_thread, daemon=True).start()
+# =====================================================================
 
 @app.route('/api/receber_dados', methods=['POST'])
 def receber_dados():
     payload = request.json
     sensor_id = payload.get("sensor_id")
-    
     if sensor_id:
-        sensores_conectados[sensor_id] = {
-            "last_ping": time.time(),
-            "data": payload
-        }
-        
+        sensores_conectados[sensor_id] = {"last_ping": time.time(), "data": payload}
         diag = payload.get("diagnostics", "")
         if any(palavra in diag for palavra in ["LOOP", "FALHA", "SEM INTERNET", "INSTABILIDADE"]):
             nivel = "error" if "FALHA" in diag or "LOOP" in diag else "warning"
             registrar_alerta(sensor_id, diag, nivel)
-        
     comando = comandos_pendentes.pop(sensor_id, None)
     return jsonify({"status": "sucesso", "comando": comando})
 
@@ -79,59 +161,56 @@ def receber_scan():
 def get_sensores():
     agora = time.time()
     ativos = {}
-    
     for s_id, s_data in list(sensores_conectados.items()):
-        if agora - s_data['last_ping'] < 15:
+        # Se for o virtual, mantém ativo. Senão, regra de 15s.
+        if s_id == "☁️ SERVIDOR NUVEM (Virtual)" or agora - s_data['last_ping'] < 15:
             ativos[s_id] = s_data
         else:
             registrar_alerta(s_id, f"🔴 SENSOR DESCONECTADO (Máquina desligada ou sem internet).", "error")
     
     sensores_conectados.clear()
     sensores_conectados.update(ativos)
-    
-    return jsonify({
-        "sensores": sensores_conectados,
-        "alertas": list(reversed(eventos_criticos)) 
-    })
+    return jsonify({"sensores": sensores_conectados, "alertas": list(reversed(eventos_criticos))})
 
 @app.route('/api/limpar_alertas', methods=['POST'])
 def limpar_alertas():
-    if request.user_role == 'admin':
-        eventos_criticos.clear()
+    if request.user_role == 'admin': eventos_criticos.clear()
     return jsonify({"status": "limpo"})
 
 @app.route('/api/enviar_comando', methods=['POST'])
 def enviar_comando():
-    if request.user_role != 'admin':
-        return jsonify({"status": "erro", "msg": "Sem permissão"}), 403
+    if request.user_role != 'admin': return jsonify({"status": "erro", "msg": "Sem permissão"}), 403
         
     dados = request.json
     sensor_id = dados.get("sensor_id")
     comando = dados.get("comando")
     
+    # TRATA COMANDO PARA O SENSOR VIRTUAL
+    if sensor_id == "☁️ SERVIDOR NUVEM (Virtual)" and comando == "UPDATE_CONFIG":
+        CLOUD_CONFIG["external_targets"] = [t.strip() for t in dados.get("external_targets", "").split(',') if t.strip()]
+        cloud_latency_history.clear()
+        return jsonify({"status": "enviado"})
+
     pacote = {"comando": comando}
     if comando == "UPDATE_CONFIG":
         pacote["router_ip"] = dados.get("router_ip")
         pacote["external_targets"] = dados.get("external_targets")
         
     comandos_pendentes[sensor_id] = pacote
-    if comando == "SCAN":
-        resultados_scan.pop(sensor_id, None) 
-        
+    if comando == "SCAN": resultados_scan.pop(sensor_id, None) 
     return jsonify({"status": "enviado"})
 
 @app.route('/api/ler_scan')
 def ler_scan():
     sensor_id = request.args.get("sensor_id")
-    if sensor_id in resultados_scan:
-        return jsonify({"status": "pronto", "devices": resultados_scan[sensor_id]})
+    if sensor_id in resultados_scan: return jsonify({"status": "pronto", "devices": resultados_scan[sensor_id]})
     return jsonify({"status": "aguardando"})
 
 # --- ROTAS DO PWA ---
 @app.route('/manifest.json')
 def serve_manifest():
     manifest = {
-        "name": "Network Analyzer PRO - Central",
+        "name": "Network Analyzer PRO",
         "short_name": "NetAnalyzer",
         "start_url": "/",
         "display": "standalone",
@@ -172,12 +251,7 @@ def dashboard():
             .noc-layout {{ display: grid; grid-template-columns: 3fr 1fr; gap: 20px; max-width: 1500px; margin: 0 auto; align-items: start;}}
             .main-panel {{ background: #313244; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }}
             .side-panel {{ background: #1e1e2e; display: flex; flex-direction: column; gap: 15px; position: sticky; top: 15px; align-self: start; }}
-            
-            /* CSS Responsivo Otimizado */
-            @media (max-width: 900px) {{ 
-                .noc-layout {{ grid-template-columns: 1fr; }} 
-                .side-panel {{ position: static; }} 
-            }}
+            @media (max-width: 900px) {{ .noc-layout {{ grid-template-columns: 1fr; }} .side-panel {{ position: static; }} }}
             
             h1 {{ color: #89b4fa; text-align: center; margin-top: 0; }}
             .brand-header {{ text-align: center; font-size: 0.75em; color: #6c7086; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 5px; font-weight: bold; }}
@@ -231,23 +305,7 @@ def dashboard():
             .input-group label {{ margin-bottom: 5px; font-size: 0.85em; color: #bac2de; font-weight: bold;}}
             input[type="text"] {{ padding: 8px; border: 1px solid #45475a; border-radius: 4px; background: #1e1e2e; color: #cdd6f4; width: 95%; box-sizing: border-box;}}
 
-            /* --- ESTILOS DO POP-UP DE INSTALAÇÃO DO PWA --- */
-            .pwa-popup {{
-                display: none;
-                position: fixed;
-                bottom: 20px;
-                left: 50%;
-                transform: translateX(-50%);
-                background: #313244;
-                padding: 20px;
-                border-radius: 12px;
-                box-shadow: 0 10px 30px rgba(0,0,0,0.8);
-                border: 2px solid #89b4fa;
-                z-index: 9999;
-                text-align: center;
-                width: 90%;
-                max-width: 400px;
-            }}
+            .pwa-popup {{ display: none; position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #313244; padding: 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); border: 2px solid #89b4fa; z-index: 9999; text-align: center; width: 90%; max-width: 400px; }}
             .pwa-popup p {{ margin: 0 0 15px 0; color: #cdd6f4; font-weight: bold; font-size: 1.1em; }}
             .btn-install-pwa {{ background: #a6e3a1; color: #1e1e2e; width: 48%; margin: 0; }}
             .btn-close-pwa {{ background: #45475a; color: #cdd6f4; width: 48%; margin: 0; }}
@@ -302,7 +360,7 @@ def dashboard():
                     <div id="admin-config-panel" style="background: #181825; padding: 15px; border-radius: 8px; margin-bottom: 20px; display:none;">
                         <h4 style="margin: 0 0 15px 0; color:#89b4fa;">⚙️ Alterar Configurações Remotamente</h4>
                         <div style="display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
-                            <div class="input-group">
+                            <div class="input-group" id="group-router">
                                 <label>Gateway / Roteador</label>
                                 <input type="text" id="remote-router" placeholder="Ex: 192.168.0.1">
                             </div>
@@ -324,18 +382,17 @@ def dashboard():
             <div class="side-panel" id="sidebar-container" style="display:none;">
                 <div id="admin-c2-panel" class="global-card" style="border-left-color: #f9e2af; display:none; margin-bottom: 15px;">
                     <h4 style="margin: 0 0 10px 0; color:#cdd6f4; text-align:center;">Comandos (C2)</h4>
-                    <button class="btn-scan" onclick="enviarComando('SCAN')">🔍 Escanear Rede Local</button>
-                    <button class="btn-danger" onclick="confirmarDesinstalacao()">🗑️ Auto-Destruir Sensor</button>
+                    <button class="btn-scan" id="btn-do-scan" onclick="enviarComando('SCAN')">🔍 Escanear Rede Local</button>
+                    <button class="btn-danger" id="btn-do-uninstall" onclick="confirmarDesinstalacao()">🗑️ Auto-Destruir Sensor</button>
                 </div>
                 
-                <h3 style="color: #bac2de; margin-bottom: 0; text-align:center;">🌐 Tráfego Global</h3>
-                <p style="font-size: 0.8em; text-align: center; color: #6c7086; margin-top:0;">Visão do cliente</p>
+                <h3 style="color: #bac2de; margin-bottom: 0; text-align:center;" id="lateral-title">🌐 Tráfego Global</h3>
+                <p style="font-size: 0.8em; text-align: center; color: #6c7086; margin-top:0;" id="lateral-subtitle">Visão do cliente</p>
                 <div id="globals-container"></div>
             </div>
         </div>
 
         <script>
-            // --- REGISTRO DO SERVICE WORKER E POP-UP DE INSTALAÇÃO (PWA) ---
             let deferredPrompt;
             const pwaPopup = document.getElementById('pwa-install-popup');
             const btnInstallPwa = document.getElementById('btn-install-pwa');
@@ -353,9 +410,7 @@ def dashboard():
                 pwaPopup.style.display = 'block';
             }});
 
-            btnClosePwa.addEventListener('click', () => {{
-                pwaPopup.style.display = 'none';
-            }});
+            btnClosePwa.addEventListener('click', () => {{ pwaPopup.style.display = 'none'; }});
 
             btnInstallPwa.addEventListener('click', async () => {{
                 pwaPopup.style.display = 'none';
@@ -366,12 +421,6 @@ def dashboard():
                 }}
             }});
 
-            window.addEventListener('appinstalled', () => {{
-                pwaPopup.style.display = 'none';
-                console.log('App Network Analyzer PRO instalado com sucesso!');
-            }});
-
-            // --- LÓGICA DO DASHBOARD ---
             const userRole = "{request.user_role}"; 
             let currentSensor = ""; let mainChart = null; let scanInterval = null;
             const colorPalette = ['#89b4fa', '#f9e2af', '#cba6f7', '#94e2d5', '#fab387', '#f38ba8'];
@@ -400,6 +449,21 @@ def dashboard():
                     document.getElementById('dashboard-content').style.display = 'block';
                     document.getElementById('sidebar-container').style.display = 'flex';
                     document.getElementById('offline-alert').style.display = 'none';
+                    
+                    // Lógica para bloquear os botões C2 se for o Servidor Virtual
+                    if(currentSensor === "☁️ SERVIDOR NUVEM (Virtual)") {{
+                        if(userRole === "admin") document.getElementById('admin-c2-panel').style.display = 'none';
+                        document.getElementById('remote-router').disabled = true;
+                        document.getElementById('remote-router').value = "N/A";
+                        document.getElementById('lateral-title').style.display = 'none';
+                        document.getElementById('lateral-subtitle').style.display = 'none';
+                    }} else {{
+                        if(userRole === "admin") document.getElementById('admin-c2-panel').style.display = 'block';
+                        document.getElementById('remote-router').disabled = false;
+                        document.getElementById('lateral-title').style.display = 'block';
+                        document.getElementById('lateral-subtitle').style.display = 'block';
+                    }}
+                    
                     fetchMasterData();
                 }} else {{
                     document.getElementById('dashboard-content').style.display = 'none';
@@ -430,7 +494,7 @@ def dashboard():
                     headers: {{'Content-Type': 'application/json'}}, 
                     body: JSON.stringify({{sensor_id: currentSensor, comando: "UPDATE_CONFIG", router_ip: r_ip, external_targets: e_tg}}) 
                 }});
-                alert("Ordem enviada! Sensor aplicará em instantes.");
+                alert("Ordem enviada! Alvos atualizados com sucesso.");
             }}
 
             function confirmarDesinstalacao() {{
@@ -440,9 +504,7 @@ def dashboard():
                 }}
             }}
 
-            async function limparAlertasGlobais() {{
-                await fetch('/api/limpar_alertas', {{ method: 'POST' }});
-            }}
+            async function limparAlertasGlobais() {{ await fetch('/api/limpar_alertas', {{ method: 'POST' }}); }}
 
             async function verificarScan() {{
                 const res = await fetch('/api/ler_scan?sensor_id=' + currentSensor);
@@ -482,7 +544,10 @@ def dashboard():
                     const select = document.getElementById('sensor-select');
                     const oldVal = select.value;
                     let optionsHTML = '<option value="">-- Selecione uma Máquina --</option>';
-                    for(const s_id in sensores_dados) optionsHTML += `<option value="${{s_id}}">🟢 Online: ${{s_id}}</option>`;
+                    for(const s_id in sensores_dados) {{
+                        let icone = s_id.includes("NUVEM") ? "☁️" : "🟢";
+                        optionsHTML += `<option value="${{s_id}}">${{icone}} Sensor Online: ${{s_id}}</option>`;
+                    }}
                     if(Object.keys(sensores_dados).length === 0) optionsHTML = '<option value="">🔴 Nenhum sensor online</option>';
                     
                     select.innerHTML = optionsHTML;
@@ -491,8 +556,10 @@ def dashboard():
                     if(currentSensor && sensores_dados[currentSensor]) {{
                         const sData = sensores_dados[currentSensor].data;
                         
-                        if(document.activeElement.id !== 'remote-router') document.getElementById('remote-router').value = sData.config.router_ip;
-                        if(document.activeElement.id !== 'remote-externals') document.getElementById('remote-externals').value = sData.config.external_targets.join(', ');
+                        if(document.activeElement.id !== 'remote-router' && currentSensor !== "☁️ SERVIDOR NUVEM (Virtual)") 
+                            document.getElementById('remote-router').value = sData.config.router_ip;
+                        if(document.activeElement.id !== 'remote-externals') 
+                            document.getElementById('remote-externals').value = sData.config.external_targets.join(', ');
                         
                         const diagBox = document.getElementById('diag-box');
                         diagBox.innerText = sData.diagnostics;
