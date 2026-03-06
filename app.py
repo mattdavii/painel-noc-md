@@ -12,8 +12,8 @@ app = Flask(__name__)
 
 # --- SISTEMA DE LOGINS (RBAC) ---
 USUARIOS = {
-    "admin": {"senha": "mdadmin2026", "role": "admin"},
-    "cliente": {"senha": "mdcliente2026", "role": "viewer"}
+    "admin": {"senha": "100110Md.", "role": "admin"},
+    "cliente": {"senha": "cliente123", "role": "viewer"}
 }
 
 def authenticate():
