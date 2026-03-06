@@ -1,5 +1,5 @@
 from flask import Flask, jsonify, render_template_string, request, make_response
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 
 app = Flask(__name__)
@@ -40,8 +40,11 @@ def registrar_alerta(sensor_id, msg, level="warning"):
         if msg in ultimo_msg or ultimo_msg in msg:
             return
 
+    # Força o horário oficial do Brasil (UTC -3)
+    hora_brasil = datetime.utcnow() - timedelta(hours=3)
+
     eventos_criticos.append({
-        "time": datetime.now().strftime("%d/%m %H:%M:%S"),
+        "time": hora_brasil.strftime("%d/%m %H:%M:%S"),
         "sensor_id": sensor_id,
         "msg": msg,
         "level": level
@@ -451,4 +454,5 @@ def dashboard():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
+
 
