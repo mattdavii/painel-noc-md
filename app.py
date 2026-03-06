@@ -6,8 +6,8 @@ app = Flask(__name__)
 
 # --- SISTEMA DE LOGINS (RBAC) ---
 USUARIOS = {
-    "admin": {"senha": "100110Md.", "role": "admin"},
-    "cliente": {"senha": "cliente123", "role": "viewer"}
+    "admin": {"senha": "mdadmin2026", "role": "admin"},
+    "cliente": {"senha": "mdcliente2026", "role": "viewer"}
 }
 
 def authenticate():
@@ -15,22 +15,41 @@ def authenticate():
 
 @app.before_request
 def require_auth():
-    # O Sensor (.exe) não tem senha para mandar dados, então liberamos as rotas de API para ele:
     if request.path in ['/api/receber_dados', '/api/receber_scan']:
         return
     
-    # Para você e seu cliente abrindo o site, exige senha:
     auth = request.authorization
     if not auth or auth.username not in USUARIOS or USUARIOS[auth.username]["senha"] != auth.password:
         return authenticate()
     
-    # Salva qual é o nível de permissão de quem logou (admin ou viewer)
     request.user_role = USUARIOS[auth.username]["role"]
 
 # --- BANCO DE DADOS EM MEMÓRIA ---
 sensores_conectados = {}
 comandos_pendentes = {} 
-resultados_scan = {}    
+resultados_scan = {}
+eventos_criticos = [] # NOVO: Armazena o histórico global de falhas
+
+def registrar_alerta(sensor_id, msg, level="warning"):
+    """Registra um alerta no painel global sem fazer spam da mesma mensagem repetida."""
+    # Pega o último alerta desse sensor
+    ultimos_deste_sensor = [e for e in eventos_criticos if e["sensor_id"] == sensor_id]
+    if ultimos_deste_sensor:
+        ultimo_msg = ultimos_deste_sensor[-1]["msg"]
+        # Se a mensagem for exatamente igual à última, não registra de novo para não poluir
+        if msg in ultimo_msg or ultimo_msg in msg:
+            return
+
+    eventos_criticos.append({
+        "time": datetime.now().strftime("%d/%m %H:%M:%S"),
+        "sensor_id": sensor_id,
+        "msg": msg,
+        "level": level
+    })
+    
+    # Mantém apenas os últimos 50 alertas globais na memória para não pesar o servidor
+    if len(eventos_criticos) > 50:
+        eventos_criticos.pop(0)
 
 @app.route('/api/receber_dados', methods=['POST'])
 def receber_dados():
@@ -43,7 +62,12 @@ def receber_dados():
             "data": payload
         }
         
-    # Entrega o comando para o sensor, se houver
+        # --- VERIFICADOR DE EVENTOS CRÍTICOS ---
+        diag = payload.get("diagnostics", "")
+        if any(palavra in diag for palavra in ["LOOP", "FALHA", "SEM INTERNET", "INSTABILIDADE"]):
+            nivel = "error" if "FALHA" in diag or "LOOP" in diag else "warning"
+            registrar_alerta(sensor_id, diag, nivel)
+        
     comando = comandos_pendentes.pop(sensor_id, None)
     return jsonify({"status": "sucesso", "comando": comando})
 
@@ -57,14 +81,31 @@ def receber_scan():
 @app.route('/api/sensores')
 def get_sensores():
     agora = time.time()
-    ativos = {k: v for k, v in sensores_conectados.items() if agora - v['last_ping'] < 15}
+    ativos = {}
+    
+    for s_id, s_data in list(sensores_conectados.items()):
+        if agora - s_data['last_ping'] < 15:
+            ativos[s_id] = s_data
+        else:
+            # SENSOR CAIU! (Parou de mandar dados há mais de 15 segundos)
+            registrar_alerta(s_id, f"🔴 SENSOR DESCONECTADO (Máquina desligada ou sem internet total).", "error")
+    
     sensores_conectados.clear()
     sensores_conectados.update(ativos)
-    return jsonify(sensores_conectados)
+    
+    return jsonify({
+        "sensores": sensores_conectados,
+        "alertas": list(reversed(eventos_criticos)) # Envia invertido (mais recente primeiro)
+    })
+
+@app.route('/api/limpar_alertas', methods=['POST'])
+def limpar_alertas():
+    if request.user_role == 'admin':
+        eventos_criticos.clear()
+    return jsonify({"status": "limpo"})
 
 @app.route('/api/enviar_comando', methods=['POST'])
 def enviar_comando():
-    # Segurança de Back-end: Impede que o "viewer" envie comandos forçados
     if request.user_role != 'admin':
         return jsonify({"status": "erro", "msg": "Sem permissão"}), 403
         
@@ -72,16 +113,12 @@ def enviar_comando():
     sensor_id = dados.get("sensor_id")
     comando = dados.get("comando")
     
-    # Prepara o pacote de ordem
     pacote = {"comando": comando}
-    
-    # Se for ordem para trocar IP, adiciona os IPs no pacote
     if comando == "UPDATE_CONFIG":
         pacote["router_ip"] = dados.get("router_ip")
         pacote["external_targets"] = dados.get("external_targets")
         
     comandos_pendentes[sensor_id] = pacote
-    
     if comando == "SCAN":
         resultados_scan.pop(sensor_id, None) 
         
@@ -114,6 +151,19 @@ def dashboard():
             
             h1 {{ color: #89b4fa; text-align: center; margin-top: 0; }}
             .brand-header {{ text-align: center; font-size: 0.75em; color: #6c7086; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 5px; font-weight: bold; }}
+            
+            /* --- ESTILOS DO NOVO PAINEL DE ALERTAS GLOBAIS --- */
+            .global-alerts-container {{ background: #181825; border-left: 4px solid #f38ba8; padding: 15px; border-radius: 8px; margin-bottom: 20px; max-height: 250px; overflow-y: auto; }}
+            .alerts-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }}
+            .btn-clear-alerts {{ background: #45475a; color: #cdd6f4; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8em; }}
+            .btn-clear-alerts:hover {{ background: #585b70; }}
+            .alert-table {{ width: 100%; border-collapse: collapse; font-size: 0.9em; }}
+            .alert-table th, .alert-table td {{ padding: 8px; border-bottom: 1px solid #313244; text-align: left; }}
+            .alert-table th {{ color: #bac2de; position: sticky; top: 0; background: #181825; }}
+            .alert-error {{ color: #f38ba8; font-weight: bold; }}
+            .alert-warning {{ color: #f9e2af; font-weight: bold; }}
+            .sensor-badge {{ background: #313244; padding: 3px 8px; border-radius: 4px; color: #89b4fa; font-family: monospace; font-size: 0.9em; }}
+            /* ------------------------------------------------ */
             
             .selector-container {{ background: #181825; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; border: 2px solid #a6e3a1; display:flex; justify-content: space-between; align-items: center;}}
             select {{ padding: 10px; font-size: 1.1em; border-radius: 4px; background: #1e1e2e; color: #a6e3a1; font-weight: bold; border: 1px solid #45475a; min-width: 300px; cursor: pointer; flex: 1; margin: 0 15px;}}
@@ -167,6 +217,19 @@ def dashboard():
                 <div class="brand-header">MD Soluções Tecnológicas</div>
                 <h1>🌐 Network Analyzer PRO - Central</h1>
                 
+                <div class="global-alerts-container">
+                    <div class="alerts-header">
+                        <h3 style="margin: 0; color: #f38ba8;">🚨 Eventos Críticos da Rede (Radar Global)</h3>
+                        <button id="btn-clear-alerts" class="btn-clear-alerts" onclick="limparAlertasGlobais()" style="display:none; width:auto; margin:0;">Varrer Histórico</button>
+                    </div>
+                    <table class="alert-table">
+                        <thead><tr><th style="width: 15%;">Hora</th><th style="width: 25%;">Máquina / Sensor</th><th>Descrição do Incidente</th></tr></thead>
+                        <tbody id="global-alerts-body">
+                            <tr><td colspan="3" style="text-align:center; color:#6c7086;">Nenhuma falha detectada recentemente. Rede estável.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                
                 <div class="selector-container">
                     <div id="role-badge" style="font-size:0.8em; padding:5px 10px; background:#45475a; border-radius:4px; font-weight:bold;"></div>
                     <select id="sensor-select" onchange="changeSensor()">
@@ -214,17 +277,17 @@ def dashboard():
         </div>
 
         <script>
-            const userRole = "{request.user_role}"; // Puxa do Python quem está logado
+            const userRole = "{request.user_role}"; 
             let currentSensor = ""; let mainChart = null; let scanInterval = null;
             const colorPalette = ['#89b4fa', '#f9e2af', '#cba6f7', '#94e2d5', '#fab387', '#f38ba8'];
 
-            // Ajusta a interface com base no login
             window.onload = () => {{
                 if(userRole === "admin") {{
                     document.getElementById('role-badge').innerText = "👨‍💻 MODO ADMIN";
                     document.getElementById('role-badge').style.color = "#a6e3a1";
                     document.getElementById('admin-config-panel').style.display = "block";
                     document.getElementById('admin-c2-panel').style.display = "block";
+                    document.getElementById('btn-clear-alerts').style.display = "block";
                 }} else {{
                     document.getElementById('role-badge').innerText = "👁️ MODO VISUALIZADOR";
                     document.getElementById('role-badge').style.color = "#f9e2af";
@@ -242,7 +305,6 @@ def dashboard():
                     document.getElementById('dashboard-content').style.display = 'block';
                     document.getElementById('sidebar-container').style.display = 'flex';
                     document.getElementById('offline-alert').style.display = 'none';
-                    // Força a atualização imediata dos campos de IP
                     fetchMasterData();
                 }} else {{
                     document.getElementById('dashboard-content').style.display = 'none';
@@ -271,21 +333,20 @@ def dashboard():
                 await fetch('/api/enviar_comando', {{ 
                     method: 'POST', 
                     headers: {{'Content-Type': 'application/json'}}, 
-                    body: JSON.stringify({{
-                        sensor_id: currentSensor, 
-                        comando: "UPDATE_CONFIG",
-                        router_ip: r_ip,
-                        external_targets: e_tg
-                    }}) 
+                    body: JSON.stringify({{sensor_id: currentSensor, comando: "UPDATE_CONFIG", router_ip: r_ip, external_targets: e_tg}}) 
                 }});
                 alert("Ordem de Reconfiguração enviada! O Sensor aplicará as mudanças em instantes.");
             }}
 
             function confirmarDesinstalacao() {{
-                if(confirm("⚠️ ATENÇÃO EXTREMA!\\n\\nIsso fará o executável se APAGAR PERMANENTEMENTE da máquina do cliente.\\nVocê perderá o acesso instantaneamente.\\n\\nDeseja explodir o sensor remotamente?")) {{
+                if(confirm("⚠️ ATENÇÃO EXTREMA!\\n\\nIsso fará o executável se APAGAR PERMANENTEMENTE da máquina do cliente.\\n\\nDeseja explodir o sensor remotamente?")) {{
                     enviarComando('UNINSTALL');
-                    alert("Ordem de Auto-destruição enviada. O painel perderá o contato.");
+                    alert("Ordem de Auto-destruição enviada.");
                 }}
+            }}
+
+            async function limparAlertasGlobais() {{
+                await fetch('/api/limpar_alertas', {{ method: 'POST' }});
             }}
 
             async function verificarScan() {{
@@ -303,21 +364,41 @@ def dashboard():
             async function fetchMasterData() {{
                 try {{
                     const res = await fetch('/api/sensores');
-                    const data = await res.json();
+                    const masterData = await res.json();
                     
+                    const sensores_dados = masterData.sensores;
+                    const alertas_dados = masterData.alertas;
+                    
+                    // 1. ATUALIZA A TABELA DE ALERTAS GLOBAIS
+                    const alertasTbody = document.getElementById('global-alerts-body');
+                    if(alertas_dados.length === 0) {{
+                        alertasTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#a6e3a1; font-weight:bold;">Tudo OK! Nenhuma falha detectada em seus clientes.</td></tr>';
+                    }} else {{
+                        alertasTbody.innerHTML = '';
+                        alertas_dados.forEach(alerta => {{
+                            const corClasse = alerta.level === 'error' ? 'alert-error' : 'alert-warning';
+                            alertasTbody.innerHTML += `<tr>
+                                <td>${{alerta.time}}</td>
+                                <td><span class="sensor-badge">${{alerta.sensor_id}}</span></td>
+                                <td class="${{corClasse}}">${{alerta.msg}}</td>
+                            </tr>`;
+                        }});
+                    }}
+
+                    // 2. ATUALIZA O SELETOR DE SENSORES
                     const select = document.getElementById('sensor-select');
                     const oldVal = select.value;
                     let optionsHTML = '<option value="">-- Selecione uma Máquina --</option>';
-                    for(const s_id in data) optionsHTML += `<option value="${{s_id}}">🟢 Sensor Online: ${{s_id}}</option>`;
-                    if(Object.keys(data).length === 0) optionsHTML = '<option value="">🔴 Nenhum sensor online na rede</option>';
+                    for(const s_id in sensores_dados) optionsHTML += `<option value="${{s_id}}">🟢 Sensor Online: ${{s_id}}</option>`;
+                    if(Object.keys(sensores_dados).length === 0) optionsHTML = '<option value="">🔴 Nenhum sensor online na rede</option>';
                     
                     select.innerHTML = optionsHTML;
-                    if(data[oldVal]) select.value = oldVal; else currentSensor = "";
+                    if(sensores_dados[oldVal]) select.value = oldVal; else currentSensor = "";
 
-                    if(currentSensor && data[currentSensor]) {{
-                        const sData = data[currentSensor].data;
+                    // 3. ATUALIZA O GRÁFICO SE TIVER UM SENSOR SELECIONADO
+                    if(currentSensor && sensores_dados[currentSensor]) {{
+                        const sData = sensores_dados[currentSensor].data;
                         
-                        // Atualiza as caixas de input com a configuração atual do sensor, APENAS se não estiver focado
                         if(document.activeElement.id !== 'remote-router') document.getElementById('remote-router').value = sData.config.router_ip;
                         if(document.activeElement.id !== 'remote-externals') document.getElementById('remote-externals').value = sData.config.external_targets.join(', ');
                         
@@ -336,7 +417,6 @@ def dashboard():
                             targetsContainer.innerHTML += `<div class="target-card ${{statusClass}}"><div style="font-size: 0.8em; color: #bac2de;">${{target}}</div><div style="color: ${{color}}; font-size: 1.2em; font-weight:bold; margin-top:5px;">${{displayMs}}</div></div>`;
                         }}
                         
-                        // Atualiza Globais na Lateral
                         const globContainer = document.getElementById('globals-container');
                         globContainer.innerHTML = '';
                         for (const [name, ip] of Object.entries(sData.global_targets)) {{
