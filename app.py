@@ -28,7 +28,7 @@ def require_auth():
 sensores_conectados = {}
 comandos_pendentes = {} 
 resultados_scan = {}
-resultados_logs = {} # NOVO: Memória temporária para receber o banco de dados do sensor
+resultados_logs = {} 
 eventos_criticos = [] 
 
 def registrar_alerta(sensor_id, msg, level="warning"):
@@ -76,7 +76,6 @@ def receber_scan():
     resultados_scan[sensor_id] = payload.get("devices", [])
     return jsonify({"status": "recebido"})
 
-# NOVO: Recebe o relatório do banco de dados do cliente
 @app.route('/api/receber_logs', methods=['POST'])
 def receber_logs():
     payload = request.json
@@ -116,11 +115,14 @@ def enviar_comando():
     if comando == "UPDATE_CONFIG":
         pacote["router_ip"] = dados.get("router_ip")
         pacote["external_targets"] = dados.get("external_targets")
+    elif comando == "GET_LOGS":
+        pacote["period"] = dados.get("period")
+        pacote["date"] = dados.get("date")
         
     comandos_pendentes[sensor_id] = pacote
     
     if comando == "SCAN": resultados_scan.pop(sensor_id, None) 
-    if comando == "GET_LOGS": resultados_logs.pop(sensor_id, None) # Limpa histórico anterior
+    if comando == "GET_LOGS": resultados_logs.pop(sensor_id, None) 
         
     return jsonify({"status": "enviado"})
 
@@ -130,7 +132,6 @@ def ler_scan():
     if sensor_id in resultados_scan: return jsonify({"status": "pronto", "devices": resultados_scan[sensor_id]})
     return jsonify({"status": "aguardando"})
 
-# NOVO: Front-end pergunta se o relatório do banco de dados já chegou
 @app.route('/api/ler_logs')
 def ler_logs():
     sensor_id = request.args.get("sensor_id")
@@ -216,7 +217,7 @@ def dashboard():
             button {{ padding: 10px 15px; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; width: 100%; margin-bottom: 10px; transition: 0.2s;}}
             .btn-scan {{ background: #a6e3a1; color: #1e1e2e; }}
             .btn-scan:hover {{ background: #94e2d5; }}
-            .btn-logs {{ background: #cba6f7; color: #1e1e2e; }}
+            .btn-logs {{ background: #cba6f7; color: #1e1e2e; margin-bottom:0;}}
             .btn-logs:hover {{ background: #b4befe; }}
             .btn-danger {{ background: #f38ba8; color: #1e1e2e; }}
             .btn-danger:hover {{ background: #eba0ac; }}
@@ -229,12 +230,14 @@ def dashboard():
             
             .input-group {{ display: flex; flex-direction: column; flex: 1; min-width: 150px; text-align:left;}}
             .input-group label {{ margin-bottom: 5px; font-size: 0.85em; color: #bac2de; font-weight: bold;}}
-            input[type="text"] {{ padding: 8px; border: 1px solid #45475a; border-radius: 4px; background: #1e1e2e; color: #cdd6f4; width: 95%; box-sizing: border-box;}}
+            input[type="text"], input[type="date"] {{ padding: 8px; border: 1px solid #45475a; border-radius: 4px; background: #1e1e2e; color: #cdd6f4; width: 95%; box-sizing: border-box;}}
 
             .pwa-popup {{ display: none; position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #313244; padding: 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); border: 2px solid #89b4fa; z-index: 9999; text-align: center; width: 90%; max-width: 400px;}}
             .pwa-popup p {{ margin: 0 0 15px 0; color: #cdd6f4; font-weight: bold; font-size: 1.1em; }}
             .btn-install-pwa {{ background: #a6e3a1; color: #1e1e2e; width: 48%; margin: 0; }}
             .btn-close-pwa {{ background: #45475a; color: #cdd6f4; width: 48%; margin: 0; }}
+            
+            .box-forense {{ background: #181825; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #cba6f7;}}
         </style>
     </head>
     <body>
@@ -306,13 +309,32 @@ def dashboard():
             </div>
             
             <div class="side-panel" id="sidebar-container" style="display:none;">
-                <div id="admin-c2-panel" class="global-card" style="border-left-color: #f9e2af; display:none; margin-bottom: 15px;">
-                    <h4 style="margin: 0 0 10px 0; color:#cdd6f4; text-align:center;">Comandos (C2)</h4>
-                    <button class="btn-scan" onclick="enviarComando('SCAN')">🔍 Escanear Rede Local</button>
+                <div id="admin-c2-panel" style="display:none;">
                     
-                    <button class="btn-logs" onclick="enviarComando('GET_LOGS')">📄 Extrair Relatório (PDF)</button>
+                    <div class="global-card" style="border-left-color: #f9e2af; margin-bottom: 15px;">
+                        <h4 style="margin: 0 0 10px 0; color:#cdd6f4; text-align:center;">Comandos da Rede</h4>
+                        <button class="btn-scan" onclick="enviarComando('SCAN')">🔍 Escanear Rede Local</button>
+                    </div>
                     
-                    <button class="btn-danger" onclick="confirmarDesinstalacao()">🗑️ Auto-Destruir Sensor</button>
+                    <div class="box-forense">
+                        <h4 style="margin: 0 0 10px 0; color:#cdd6f4; text-align:center;">Relatórios (B.I.)</h4>
+                        <label style="font-size:0.8em; color:#bac2de; display:block; margin-bottom:5px;">Período do PDF:</label>
+                        <select id="log-period" onchange="toggleDateInput()" style="width: 100%; margin:0 0 10px 0; padding: 8px; font-size: 0.9em;">
+                            <option value="1">Hoje (Últimas 24h)</option>
+                            <option value="7">Últimos 7 Dias</option>
+                            <option value="15">Últimos 15 Dias</option>
+                            <option value="30">Últimos 30 Dias (Tudo)</option>
+                            <option value="custom">Data Específica...</option>
+                        </select>
+                        <input type="date" id="log-date" style="display:none; width: 100%; margin-bottom: 10px; padding: 8px; font-size: 0.9em; box-sizing: border-box;">
+                        
+                        <button class="btn-logs" style="width: 100%;" onclick="enviarComando('GET_LOGS')">📄 Extrair PDF</button>
+                    </div>
+                    
+                    <div class="global-card" style="border-left-color: #f38ba8; margin-bottom: 15px;">
+                        <button class="btn-danger" style="margin-bottom:0;" onclick="confirmarDesinstalacao()">🗑️ Auto-Destruir Sensor</button>
+                    </div>
+                    
                 </div>
                 
                 <h3 style="color: #bac2de; margin-bottom: 0; text-align:center;">🌐 Tráfego Global</h3>
@@ -340,6 +362,11 @@ def dashboard():
                     document.getElementById('role-badge').innerText = "👁️ VIEWER"; document.getElementById('role-badge').style.color = "#f9e2af";
                 }}
             }};
+            
+            function toggleDateInput() {{
+                const val = document.getElementById('log-period').value;
+                document.getElementById('log-date').style.display = val === 'custom' ? 'block' : 'none';
+            }}
 
             function initChart() {{
                 const ctx = document.getElementById('mainChart').getContext('2d');
@@ -358,7 +385,19 @@ def dashboard():
             
             async function enviarComando(cmd) {{
                 if(!currentSensor) return;
-                await fetch('/api/enviar_comando', {{ method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{sensor_id: currentSensor, comando: cmd}}) }});
+                
+                let payload = {sensor_id: currentSensor, comando: cmd};
+                
+                if(cmd === 'GET_LOGS') {{
+                    const periodVal = document.getElementById('log-period').value;
+                    const dateVal = document.getElementById('log-date').value;
+                    if(periodVal === 'custom' && !dateVal) return alert("Por favor, selecione uma data no calendário!");
+                    
+                    payload.period = periodVal;
+                    payload.date = dateVal;
+                }}
+                
+                await fetch('/api/enviar_comando', {{ method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify(payload) }});
                 
                 if(cmd === 'SCAN') {{
                     document.getElementById('modal-title').innerText = "🔍 Scanner Remoto";
@@ -367,11 +406,10 @@ def dashboard():
                     if(scanInterval) clearInterval(scanInterval); scanInterval = setInterval(verificarScan, 2000);
                 }}
                 
-                // NOVO: TRATAMENTO DO COMANDO DE LOGS
                 if(cmd === 'GET_LOGS') {{
                     document.getElementById('modal-title').innerText = "📄 Extração Forense Remota";
                     document.getElementById('scanner-modal').style.display = 'flex';
-                    document.getElementById('scanner-results').innerHTML = '<p style="text-align:center; color:#cba6f7;">Avisando o Sensor para ler seu Banco de Dados Local... O download do PDF iniciará automaticamente.</p>';
+                    document.getElementById('scanner-results').innerHTML = '<p style="text-align:center; color:#cba6f7;">Avisando o Sensor para ler seu Banco de Dados Local usando o filtro escolhido... O download do PDF iniciará automaticamente.</p>';
                     if(logsInterval) clearInterval(logsInterval); logsInterval = setInterval(verificarLogs, 2000);
                 }}
             }}
@@ -386,14 +424,13 @@ def dashboard():
                 }}
             }}
 
-            // MOTOR DE GERAÇÃO DE PDF NO NAVEGADOR
             async function gerarPDF(logsData) {{
-                if(logsData.length === 0) return alert("O sensor informou que seu Banco de Dados local está vazio.");
+                if(logsData.length === 0) return alert("O banco de dados da Usina não possui NENHUM registro de erro neste período.");
 
                 const { jsPDF } = window.jspdf; const doc = new jsPDF('landscape');
                 doc.setFillColor(49, 50, 68); doc.rect(0, 0, doc.internal.pageSize.width, 25, 'F');
                 doc.setTextColor(255, 255, 255); doc.setFontSize(16); doc.setFont("helvetica", "bold");
-                doc.text(`Network Analyzer PRO - Extracao Remota [${currentSensor}]`, 14, 16);
+                doc.text(`Network Analyzer PRO - Relatorio Forense [${currentSensor}]`, 14, 16);
                 
                 const tableData = logsData.map(log => {{
                     let cleanMessage = log.message.replace(/\[Status no momento: (.*?)\]/g, '\\n>> Latências: $1');
@@ -414,7 +451,7 @@ def dashboard():
                 }});
                 
                 let dataHoje = new Date().toISOString().split('T')[0];
-                doc.save(`Relatorio_Remoto_${currentSensor}_${dataHoje}.pdf`);
+                doc.save(`Relatorio_${currentSensor}_${dataHoje}.pdf`);
             }}
             
             async function enviarNovaConfig() {{
@@ -487,39 +524,4 @@ def dashboard():
                             let statusClass = ms === null ? 'offline' : 'online';
                             let displayMs = ms === null ? 'TIMEOUT' : (ms === 'LOOP_L3' ? 'LOOP' : ms + ' ms');
                             let color = ms === null ? '#f38ba8' : '#a6e3a1';
-                            targetsContainer.innerHTML += `<div class="target-card ${{statusClass}}"><div style="font-size: 0.8em; color: #bac2de;">${{target}}</div><div style="color: ${{color}}; font-size: 1.2em; font-weight:bold; margin-top:5px;">${{displayMs}}</div></div>`;
-                        }}
-                        
-                        const globContainer = document.getElementById('globals-container');
-                        globContainer.innerHTML = '';
-                        for (const [name, ip] of Object.entries(sData.global_targets)) {{
-                            const msVal = sData.global_latencies[name];
-                            let display = msVal === null ? '<span style="color:#f38ba8;">TIMEOUT</span>' : `${{msVal}} ms`;
-                            globContainer.innerHTML += `<div class="global-card"><div class="global-header"><div style="font-weight:bold; color:#cdd6f4;">${{name}}</div><div class="global-ms">${{display}}</div></div><div style="font-size:0.7em; color:#6c7086;">IP: ${{ip}}</div></div>`;
-                        }}
-
-                        if (sData.latency_history.length > 0) {{
-                            const newDatasets = []; let colorIndex = 0;
-                            const allTargets = Object.keys(sData.current_latencies);
-                            allTargets.forEach(target => {{
-                                const dataPoints = sData.latency_history.map(p => p.latencies[target] !== undefined ? p.latencies[target] : null);
-                                const color = colorPalette[colorIndex % colorPalette.length]; colorIndex++;
-                                newDatasets.push({{ label: target, borderColor: color, backgroundColor: color, borderWidth: 2, data: dataPoints, tension: 0.3, fill: false }});
-                            }});
-                            mainChart.data.labels = sData.latency_history.map(p => p.time);
-                            mainChart.data.datasets = newDatasets;
-                            mainChart.update();
-                        }}
-                    }} else {{ changeSensor(); }}
-                }} catch (e) {{ console.error(e); }}
-            }}
-
-            initChart(); setInterval(fetchMasterData, 1000);
-        </script>
-    </body>
-    </html>
-    """
-    return render_template_string(html)
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+                            targetsContainer.innerHTML += `<div class="target-card ${{statusClass}}"><div style="font-size: 0.8em; color: #bac2de;">${{target}}</div><div style="color: ${{color}}; font-size: 1.2em; font-weight:
