@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template_string, request, make_response
+from flask import Flask, jsonify, request, make_response
 from datetime import datetime, timedelta
 import time
 
@@ -10,19 +10,36 @@ USUARIOS = {
     "cliente": {"senha": "cliente123", "role": "viewer"}
 }
 
-def authenticate():
-    return make_response('Acesso negado. Insira as credenciais da MD Solucoes.', 401, {'WWW-Authenticate': 'Basic realm="Network Analyzer PRO"'})
+def get_user_role(req):
+    user = req.headers.get('X-Auth-User')
+    pwd = req.headers.get('X-Auth-Pass')
+    if user in USUARIOS and USUARIOS[user]['senha'] == pwd:
+        return USUARIOS[user]['role']
+    return None
 
 @app.before_request
 def require_auth():
-    if request.path in ['/api/receber_dados', '/api/receber_scan', '/api/receber_logs', '/manifest.json', '/sw.js']:
+    # Rotas Abertas (Para a Tela de Login, PWA e recebimento de dados dos Sensores)
+    rotas_abertas = ['/', '/api/login', '/api/receber_dados', '/api/receber_scan', '/api/receber_logs', '/manifest.json', '/sw.js']
+    if request.path in rotas_abertas:
         return
     
-    auth = request.authorization
-    if not auth or auth.username not in USUARIOS or USUARIOS[auth.username]["senha"] != auth.password:
-        return authenticate()
+    # Restante das rotas exige as credenciais invisíveis enviadas pelo JavaScript
+    role = get_user_role(request)
+    if not role:
+        return jsonify({"error": "Unauthorized"}), 401
     
-    request.user_role = USUARIOS[auth.username]["role"]
+    request.user_role = role
+
+# Rota para o Front-end validar a senha na tela preta
+@app.route('/api/login', methods=['POST'])
+def login_api():
+    data = request.json
+    u = data.get('user')
+    p = data.get('pass')
+    if u in USUARIOS and USUARIOS[u]['senha'] == p:
+        return jsonify({"status": "success", "role": USUARIOS[u]['role']})
+    return jsonify({"status": "error"}), 401
 
 # --- BANCO DE DADOS EM MEMÓRIA ---
 sensores_conectados = {}
@@ -99,12 +116,13 @@ def get_sensores():
 
 @app.route('/api/limpar_alertas', methods=['POST'])
 def limpar_alertas():
-    if request.user_role == 'admin': eventos_criticos.clear()
+    if getattr(request, 'user_role', None) == 'admin': 
+        eventos_criticos.clear()
     return jsonify({"status": "limpo"})
 
 @app.route('/api/enviar_comando', methods=['POST'])
 def enviar_comando():
-    if request.user_role != 'admin':
+    if getattr(request, 'user_role', None) != 'admin':
         return jsonify({"status": "erro", "msg": "Sem permissão"}), 403
         
     dados = request.json
@@ -155,7 +173,7 @@ def serve_sw():
     response.headers['Content-Type'] = 'application/javascript'
     return response
 
-# --- FRONT-END CENTRAL ---
+# --- FRONT-END CENTRAL (BLINDADO, SEM F-STRING) ---
 @app.route('/')
 def dashboard():
     html = """
@@ -174,10 +192,19 @@ def dashboard():
         
         <style>
             body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e2e; color: #cdd6f4; margin: 0; padding: 20px; }
+            
+            /* ESTILOS DE LOGIN */
+            #login-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(30, 30, 46, 0.95); z-index: 10000; display: flex; justify-content: center; align-items: center; backdrop-filter: blur(10px); }
+            .login-box { background: #313244; padding: 40px; border-radius: 12px; box-shadow: 0 15px 35px rgba(0,0,0,0.5); border: 2px solid #89b4fa; width: 320px; text-align: center; }
+            .login-box input { width: 100%; padding: 12px; margin-bottom: 20px; border: 1px solid #45475a; border-radius: 6px; background: #1e1e2e; color: #cdd6f4; box-sizing: border-box; font-size: 1.1em;}
+            .btn-login { width: 100%; padding: 12px; font-size: 1.1em; background: #a6e3a1; color:#1e1e2e; border:none; border-radius:4px; font-weight:bold; cursor:pointer; transition:0.2s;}
+            .btn-login:hover { background: #94e2d5; }
+            #main-content { display: none; }
+            
+            /* ESTILOS DO DASHBOARD */
             .noc-layout { display: grid; grid-template-columns: 3fr 1fr; gap: 20px; max-width: 1500px; margin: 0 auto; align-items: start;}
             .main-panel { background: #313244; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
             .side-panel { background: #1e1e2e; display: flex; flex-direction: column; gap: 15px; position: sticky; top: 15px; align-self: start; }
-            
             @media (max-width: 900px) { .noc-layout { grid-template-columns: 1fr; } .side-panel { position: static; } }
             
             h1 { color: #89b4fa; text-align: center; margin-top: 0; }
@@ -236,11 +263,22 @@ def dashboard():
             .pwa-popup p { margin: 0 0 15px 0; color: #cdd6f4; font-weight: bold; font-size: 1.1em; }
             .btn-install-pwa { background: #a6e3a1; color: #1e1e2e; width: 48%; margin: 0; }
             .btn-close-pwa { background: #45475a; color: #cdd6f4; width: 48%; margin: 0; }
-            
             .box-forense { background: #181825; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #cba6f7;}
         </style>
     </head>
     <body>
+        
+        <div id="login-overlay">
+            <div class="login-box">
+                <div class="brand-header" style="margin-bottom:20px;">MD Soluções Tecnológicas</div>
+                <h2 style="color: #a6e3a1; margin-top:0;">NOC Central</h2>
+                <input type="text" id="login-user" placeholder="Usuário" autocomplete="off">
+                <input type="password" id="login-pass" placeholder="Senha" autocomplete="off" onkeypress="if(event.key === 'Enter') doLogin();">
+                <button class="btn-login" onclick="doLogin()">Acessar Painel</button>
+                <p id="login-err" style="color: #f38ba8; font-size: 0.9em; display: none;">Credenciais Inválidas.</p>
+            </div>
+        </div>
+
         <div id="pwa-install-popup" class="pwa-popup">
             <p>📲 Deseja instalar o Network Analyzer PRO no seu celular?</p>
             <div style="display: flex; justify-content: space-between;">
@@ -257,113 +295,155 @@ def dashboard():
             </div>
         </div>
 
-        <div class="noc-layout">
-            <div class="main-panel">
-                <div class="brand-header">MD Soluções Tecnológicas</div>
-                <h1>🌐 Network Analyzer PRO - Central</h1>
-                
-                <div class="global-alerts-container">
-                    <div class="alerts-header">
-                        <h3 style="margin: 0; color: #f38ba8; font-size:1.1em;">🚨 Radar Global</h3>
-                        <button id="btn-clear-alerts" class="btn-clear-alerts" onclick="limparAlertasGlobais()" style="display:none; width:auto; margin:0;">Varrer Histórico</button>
-                    </div>
-                    <table class="alert-table">
-                        <thead><tr><th style="width: 25%;">Hora</th><th style="width: 25%;">Máquina</th><th>Incidente</th></tr></thead>
-                        <tbody id="global-alerts-body">
-                            <tr><td colspan="3" style="text-align:center; color:#6c7086;">Nenhuma falha detectada.</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-                
-                <div class="selector-container">
-                    <div id="role-badge" style="font-size:0.8em; padding:5px 10px; background:#45475a; border-radius:4px; font-weight:bold;"></div>
-                    <select id="sensor-select" onchange="changeSensor()">
-                        <option value="">Aguardando conexão de sensores...</option>
-                    </select>
-                </div>
-
-                <div id="offline-alert" class="offline-msg">⚠️ Nenhum Sensor Selecionado ou Máquina Offline.</div>
-
-                <div id="dashboard-content" style="display:none;">
+        <div id="main-content">
+            <div class="noc-layout">
+                <div class="main-panel">
+                    <div class="brand-header">MD Soluções Tecnológicas</div>
+                    <h1>🌐 Network Analyzer PRO - Central</h1>
                     
-                    <div id="admin-config-panel" style="background: #181825; padding: 15px; border-radius: 8px; margin-bottom: 20px; display:none;">
-                        <h4 style="margin: 0 0 15px 0; color:#89b4fa;">⚙️ Alterar Configurações Remotamente</h4>
-                        <div style="display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
-                            <div class="input-group">
-                                <label>Gateway / Roteador</label>
-                                <input type="text" id="remote-router" placeholder="Ex: 192.168.0.1">
-                            </div>
-                            <div class="input-group" style="flex:2;">
-                                <label>Alvos a Monitorar</label>
-                                <input type="text" id="remote-externals" placeholder="Ex: google.com, 8.8.8.8">
-                            </div>
-                            <button class="btn-save" onclick="enviarNovaConfig()" style="width: 100%; margin-bottom:0; margin-top: 10px;">💾 Aplicar</button>
+                    <div class="global-alerts-container">
+                        <div class="alerts-header">
+                            <h3 style="margin: 0; color: #f38ba8; font-size:1.1em;">🚨 Radar Global</h3>
+                            <button id="btn-clear-alerts" class="btn-clear-alerts" onclick="limparAlertasGlobais()" style="display:none; width:auto; margin:0;">Varrer Histórico</button>
                         </div>
+                        <table class="alert-table">
+                            <thead><tr><th style="width: 25%;">Hora</th><th style="width: 25%;">Máquina</th><th>Incidente</th></tr></thead>
+                            <tbody id="global-alerts-body">
+                                <tr><td colspan="3" style="text-align:center; color:#6c7086;">Nenhuma falha detectada.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="selector-container">
+                        <div id="role-badge" style="font-size:0.8em; padding:5px 10px; background:#45475a; border-radius:4px; font-weight:bold;"></div>
+                        <select id="sensor-select" onchange="changeSensor()">
+                            <option value="">Aguardando conexão de sensores...</option>
+                        </select>
                     </div>
 
-                    <div id="diag-box" class="status-box ok">Conectando...</div>
-                    <div class="targets-grid" id="targets-container"></div>
-                    <h4 style="color:#bac2de; margin-bottom: 5px;">Latências da Rede Local</h4>
-                    <div class="chart-container"><canvas id="mainChart"></canvas></div>
-                </div>
-            </div>
-            
-            <div class="side-panel" id="sidebar-container" style="display:none;">
-                <div id="admin-c2-panel" style="display:none;">
-                    
-                    <div class="global-card" style="border-left-color: #f9e2af; margin-bottom: 15px;">
-                        <h4 style="margin: 0 0 10px 0; color:#cdd6f4; text-align:center;">Comandos da Rede</h4>
-                        <button class="btn-scan" onclick="enviarComando('SCAN')">🔍 Escanear Rede Local</button>
-                    </div>
-                    
-                    <div class="box-forense">
-                        <h4 style="margin: 0 0 10px 0; color:#cdd6f4; text-align:center;">Relatórios (B.I.)</h4>
-                        <label style="font-size:0.8em; color:#bac2de; display:block; margin-bottom:5px;">Período do PDF:</label>
-                        <select id="log-period" onchange="toggleDateInput()" style="width: 100%; margin:0 0 10px 0; padding: 8px; font-size: 0.9em;">
-                            <option value="1">Hoje (Últimas 24h)</option>
-                            <option value="7">Últimos 7 Dias</option>
-                            <option value="15">Últimos 15 Dias</option>
-                            <option value="30">Últimos 30 Dias (Tudo)</option>
-                            <option value="custom">Data Específica...</option>
-                        </select>
-                        <input type="date" id="log-date" style="display:none; width: 100%; margin-bottom: 10px; padding: 8px; font-size: 0.9em; box-sizing: border-box;">
+                    <div id="offline-alert" class="offline-msg">⚠️ Nenhum Sensor Selecionado ou Máquina Offline.</div>
+
+                    <div id="dashboard-content" style="display:none;">
                         
-                        <button class="btn-logs" style="width: 100%;" onclick="enviarComando('GET_LOGS')">📄 Extrair PDF</button>
+                        <div id="admin-config-panel" style="background: #181825; padding: 15px; border-radius: 8px; margin-bottom: 20px; display:none;">
+                            <h4 style="margin: 0 0 15px 0; color:#89b4fa;">⚙️ Alterar Configurações Remotamente</h4>
+                            <div style="display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
+                                <div class="input-group">
+                                    <label>Gateway / Roteador</label>
+                                    <input type="text" id="remote-router" placeholder="Ex: 192.168.0.1">
+                                </div>
+                                <div class="input-group" style="flex:2;">
+                                    <label>Alvos a Monitorar</label>
+                                    <input type="text" id="remote-externals" placeholder="Ex: google.com, 8.8.8.8">
+                                </div>
+                                <button class="btn-save" onclick="enviarNovaConfig()" style="width: 100%; margin-bottom:0; margin-top: 10px;">💾 Aplicar</button>
+                            </div>
+                        </div>
+
+                        <div id="diag-box" class="status-box ok">Conectando...</div>
+                        <div class="targets-grid" id="targets-container"></div>
+                        <h4 style="color:#bac2de; margin-bottom: 5px;">Latências da Rede Local</h4>
+                        <div class="chart-container"><canvas id="mainChart"></canvas></div>
                     </div>
-                    
-                    <div class="global-card" style="border-left-color: #f38ba8; margin-bottom: 15px;">
-                        <button class="btn-danger" style="margin-bottom:0;" onclick="confirmarDesinstalacao()">🗑️ Auto-Destruir Sensor</button>
-                    </div>
-                    
                 </div>
                 
-                <h3 style="color: #bac2de; margin-bottom: 0; text-align:center;">🌐 Tráfego Global</h3>
-                <p style="font-size: 0.8em; text-align: center; color: #6c7086; margin-top:0;">Visão do cliente</p>
-                <div id="globals-container"></div>
+                <div class="side-panel" id="sidebar-container" style="display:none;">
+                    <div id="admin-c2-panel" style="display:none;">
+                        
+                        <div class="global-card" style="border-left-color: #f9e2af; margin-bottom: 15px;">
+                            <h4 style="margin: 0 0 10px 0; color:#cdd6f4; text-align:center;">Comandos da Rede</h4>
+                            <button class="btn-scan" onclick="enviarComando('SCAN')">🔍 Escanear Rede Local</button>
+                        </div>
+                        
+                        <div class="box-forense">
+                            <h4 style="margin: 0 0 10px 0; color:#cdd6f4; text-align:center;">Relatórios (B.I.)</h4>
+                            <label style="font-size:0.8em; color:#bac2de; display:block; margin-bottom:5px;">Período do PDF:</label>
+                            <select id="log-period" onchange="toggleDateInput()" style="width: 100%; margin:0 0 10px 0; padding: 8px; font-size: 0.9em;">
+                                <option value="1">Hoje (Últimas 24h)</option>
+                                <option value="7">Últimos 7 Dias</option>
+                                <option value="15">Últimos 15 Dias</option>
+                                <option value="30">Últimos 30 Dias (Tudo)</option>
+                                <option value="custom">Data Específica...</option>
+                            </select>
+                            <input type="date" id="log-date" style="display:none; width: 100%; margin-bottom: 10px; padding: 8px; font-size: 0.9em; box-sizing: border-box;">
+                            
+                            <button class="btn-logs" style="width: 100%;" onclick="enviarComando('GET_LOGS')">📄 Extrair PDF</button>
+                        </div>
+                        
+                        <div class="global-card" style="border-left-color: #f38ba8; margin-bottom: 15px;">
+                            <button class="btn-danger" style="margin-bottom:0;" onclick="confirmarDesinstalacao()">🗑️ Auto-Destruir Sensor</button>
+                        </div>
+                        
+                    </div>
+                    
+                    <h3 style="color: #bac2de; margin-bottom: 0; text-align:center;">🌐 Tráfego Global</h3>
+                    <p style="font-size: 0.8em; text-align: center; color: #6c7086; margin-top:0;">Visão do cliente</p>
+                    <div id="globals-container"></div>
+                </div>
             </div>
         </div>
 
         <script>
+            // --- REGISTRO DO PWA ---
             let deferredPrompt;
             if ('serviceWorker' in navigator) { window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js'); }); }
             window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredPrompt = e; document.getElementById('pwa-install-popup').style.display = 'block'; });
             document.getElementById('btn-close-pwa').addEventListener('click', () => { document.getElementById('pwa-install-popup').style.display = 'none'; });
             document.getElementById('btn-install-pwa').addEventListener('click', async () => { document.getElementById('pwa-install-popup').style.display = 'none'; if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt = null; } });
 
-            // AQUI É ONDE O FLASK INJETA O NÍVEL DO USUÁRIO SEM QUEBRAR O JAVASCRIPT!
-            const userRole = "{{ user_role }}"; 
-            
-            let currentSensor = ""; let mainChart = null; let scanInterval = null; let logsInterval = null;
+            // --- VARIÁVEIS DE SESSÃO VOLÁTIL ---
+            let authUser = ""; let authPass = ""; let userRole = ""; 
+            let currentSensor = ""; let mainChart = null; let scanInterval = null; let logsInterval = null; let fetchInterval = null;
             const colorPalette = ['#89b4fa', '#f9e2af', '#cba6f7', '#94e2d5', '#fab387', '#f38ba8'];
 
-            window.onload = () => {
-                if(userRole === "admin") {
-                    document.getElementById('role-badge').innerText = "👨‍💻 ADMIN"; document.getElementById('role-badge').style.color = "#a6e3a1";
-                    document.getElementById('admin-config-panel').style.display = "block"; document.getElementById('admin-c2-panel').style.display = "block"; document.getElementById('btn-clear-alerts').style.display = "block";
-                } else {
-                    document.getElementById('role-badge').innerText = "👁️ VIEWER"; document.getElementById('role-badge').style.color = "#f9e2af";
-                }
-            };
+            // --- SISTEMA DE LOGIN DA NUVEM ---
+            async function doLogin() {
+                const u = document.getElementById('login-user').value;
+                const p = document.getElementById('login-pass').value;
+                const err = document.getElementById('login-err');
+                
+                const res = await fetch('/api/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({user:u, pass:p}) });
+                
+                if(res.status === 200) {
+                    const data = await res.json();
+                    authUser = u; authPass = p; userRole = data.role;
+                    
+                    document.getElementById('login-overlay').style.display = 'none';
+                    document.getElementById('main-content').style.display = 'block';
+                    err.style.display = 'none';
+                    
+                    // Ajusta a tela de acordo com o nível de acesso logado
+                    if(userRole === "admin") {
+                        document.getElementById('role-badge').innerText = "👨‍💻 ADMIN"; 
+                        document.getElementById('role-badge').style.color = "#a6e3a1";
+                        document.getElementById('admin-config-panel').style.display = "block"; 
+                        document.getElementById('admin-c2-panel').style.display = "block"; 
+                        document.getElementById('btn-clear-alerts').style.display = "block";
+                    } else {
+                        document.getElementById('role-badge').innerText = "👁️ VIEWER"; 
+                        document.getElementById('role-badge').style.color = "#f9e2af";
+                        document.getElementById('admin-config-panel').style.display = "none"; 
+                        document.getElementById('admin-c2-panel').style.display = "none"; 
+                        document.getElementById('btn-clear-alerts').style.display = "none";
+                    }
+                    
+                    // Inicia a renderização do painel
+                    initChart();
+                    fetchMasterData();
+                    fetchInterval = setInterval(fetchMasterData, 1000);
+                    
+                } else { err.style.display = 'block'; }
+            }
+
+            function lockScreen() {
+                authUser = ""; authPass = ""; userRole = "";
+                document.getElementById('login-overlay').style.display = 'flex';
+                document.getElementById('main-content').style.display = 'none';
+                document.getElementById('login-pass').value = "";
+                if(fetchInterval) clearInterval(fetchInterval);
+            }
+
+            function getHeaders() { return { 'Content-Type': 'application/json', 'X-Auth-User': authUser, 'X-Auth-Pass': authPass }; }
             
             function toggleDateInput() {
                 const val = document.getElementById('log-period').value;
@@ -371,6 +451,7 @@ def dashboard():
             }
 
             function initChart() {
+                if(mainChart) return;
                 const ctx = document.getElementById('mainChart').getContext('2d');
                 mainChart = new Chart(ctx, { type: 'line', data: { labels: [], datasets: [] }, options: { responsive: true, maintainAspectRatio: false, animation: { duration: 0 }, scales: { y: { beginAtZero: true, grid: { color: '#45475a' } }, x: { grid: { color: '#45475a' } } }, plugins: { legend: { labels: { color: '#cdd6f4' } } } } });
             }
@@ -399,7 +480,8 @@ def dashboard():
                     payload.date = dateVal;
                 }
                 
-                await fetch('/api/enviar_comando', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                const res = await fetch('/api/enviar_comando', { method: 'POST', headers: getHeaders(), body: JSON.stringify(payload) });
+                if(res.status === 401) return lockScreen();
                 
                 if(cmd === 'SCAN') {
                     document.getElementById('modal-title').innerText = "🔍 Scanner Remoto";
@@ -417,7 +499,8 @@ def dashboard():
             }
 
             async function verificarLogs() {
-                const res = await fetch('/api/ler_logs?sensor_id=' + currentSensor);
+                const res = await fetch('/api/ler_logs?sensor_id=' + currentSensor, { headers: getHeaders() });
+                if(res.status === 401) return lockScreen();
                 const data = await res.json();
                 if(data.status === "pronto") {
                     clearInterval(logsInterval);
@@ -460,7 +543,8 @@ def dashboard():
                 if(!currentSensor) return;
                 const r_ip = document.getElementById('remote-router').value;
                 const e_tg = document.getElementById('remote-externals').value;
-                await fetch('/api/enviar_comando', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({sensor_id: currentSensor, comando: "UPDATE_CONFIG", router_ip: r_ip, external_targets: e_tg}) });
+                const res = await fetch('/api/enviar_comando', { method: 'POST', headers: getHeaders(), body: JSON.stringify({sensor_id: currentSensor, comando: "UPDATE_CONFIG", router_ip: r_ip, external_targets: e_tg}) });
+                if(res.status === 401) return lockScreen();
                 alert("Ordem enviada! Sensor aplicará em instantes.");
             }
 
@@ -471,10 +555,14 @@ def dashboard():
                 }
             }
 
-            async function limparAlertasGlobais() { await fetch('/api/limpar_alertas', { method: 'POST' }); }
+            async function limparAlertasGlobais() { 
+                const res = await fetch('/api/limpar_alertas', { method: 'POST', headers: getHeaders() }); 
+                if(res.status === 401) lockScreen();
+            }
 
             async function verificarScan() {
-                const res = await fetch('/api/ler_scan?sensor_id=' + currentSensor);
+                const res = await fetch('/api/ler_scan?sensor_id=' + currentSensor, { headers: getHeaders() });
+                if(res.status === 401) return lockScreen();
                 const data = await res.json();
                 if(data.status === "pronto") {
                     clearInterval(scanInterval);
@@ -487,7 +575,9 @@ def dashboard():
 
             async function fetchMasterData() {
                 try {
-                    const res = await fetch('/api/sensores');
+                    const res = await fetch('/api/sensores', { headers: getHeaders() });
+                    if(res.status === 401) return lockScreen();
+                    
                     const masterData = await res.json();
                     const sensores_dados = masterData.sensores || {};
                     const alertas_dados = masterData.alertas || [];
@@ -552,15 +642,11 @@ def dashboard():
                     } else { changeSensor(); }
                 } catch (e) { console.error(e); }
             }
-
-            initChart(); setInterval(fetchMasterData, 1000);
         </script>
     </body>
     </html>
     """
-    
-    # É AQUI QUE O FLASK INJETA AS VARIÁVEIS COM SEGURANÇA AGORA
-    return render_template_string(html, user_role=request.user_role)
+    return html
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
