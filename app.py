@@ -36,7 +36,6 @@ def login_api():
         return jsonify({"status": "success", "role": USUARIOS[u]['role']})
     return jsonify({"status": "error"}), 401
 
-# --- BANCO DE DADOS EM MEMÓRIA ---
 sensores_conectados = {}
 comandos_pendentes = {} 
 resultados_scan = {}
@@ -47,8 +46,8 @@ def registrar_alerta(sensor_id, msg, level="warning"):
     ultimos_deste_sensor = [e for e in eventos_criticos if e["sensor_id"] == sensor_id]
     if ultimos_deste_sensor:
         ultimo_msg = ultimos_deste_sensor[-1]["msg"]
-        if msg in ultimo_msg or ultimo_msg in msg:
-            return
+        if msg in ultimo_msg or ultimo_msg in msg: return
+
     hora_brasil = datetime.utcnow() - timedelta(hours=3)
     eventos_criticos.append({
         "time": hora_brasil.strftime("%d/%m %H:%M:%S"),
@@ -56,8 +55,7 @@ def registrar_alerta(sensor_id, msg, level="warning"):
         "msg": msg,
         "level": level
     })
-    if len(eventos_criticos) > 50:
-        eventos_criticos.pop(0)
+    if len(eventos_criticos) > 50: eventos_criticos.pop(0)
 
 @app.route('/api/receber_dados', methods=['POST'])
 def receber_dados():
@@ -92,25 +90,20 @@ def get_sensores():
     agora = time.time()
     ativos = {}
     for s_id, s_data in list(sensores_conectados.items()):
-        if agora - s_data['last_ping'] < 15:
-            ativos[s_id] = s_data
-        else:
-            registrar_alerta(s_id, f"🔴 SENSOR DESCONECTADO (Máquina desligada ou sem internet).", "error")
+        if agora - s_data['last_ping'] < 15: ativos[s_id] = s_data
+        else: registrar_alerta(s_id, f"🔴 SENSOR DESCONECTADO.", "error")
     sensores_conectados.clear()
     sensores_conectados.update(ativos)
     return jsonify({"sensores": sensores_conectados, "alertas": list(reversed(eventos_criticos))})
 
 @app.route('/api/limpar_alertas', methods=['POST'])
 def limpar_alertas():
-    if getattr(request, 'user_role', None) == 'admin': 
-        eventos_criticos.clear()
+    if getattr(request, 'user_role', None) == 'admin': eventos_criticos.clear()
     return jsonify({"status": "limpo"})
 
 @app.route('/api/enviar_comando', methods=['POST'])
 def enviar_comando():
-    if getattr(request, 'user_role', None) != 'admin':
-        return jsonify({"status": "erro", "msg": "Sem permissão"}), 403
-        
+    if getattr(request, 'user_role', None) != 'admin': return jsonify({"status": "erro"}), 403
     dados = request.json
     sensor_id = dados.get("sensor_id")
     comando = dados.get("comando")
@@ -140,24 +133,15 @@ def ler_logs():
     if sensor_id in resultados_logs: return jsonify({"status": "pronto", "logs": resultados_logs[sensor_id]})
     return jsonify({"status": "aguardando"})
 
-# --- ROTAS DO PWA ---
 @app.route('/manifest.json')
 def serve_manifest():
-    manifest = {
-        "name": "Network Analyzer PRO - Central", "short_name": "NetAnalyzer", "start_url": "/", "display": "standalone", "orientation": "any",  
-        "background_color": "#1e1e2e", "theme_color": "#89b4fa",
-        "icons": [{"src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iIzFlMWUyZSIvPjxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjQwIiBmaWxsPSJub25lIiBzdHJva2U9IiM4OWI0ZmEiIHN0cm9rZS13aWR0aD0iOCIvPjxwb2x5bGluZSBwb2ludHM9IjMwLDUwIDQ1LDY1IDcwLDM1IiBmaWxsPSJub25lIiBzdHJva2U9IiNhNmUzYTEiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+", "sizes": "192x192", "type": "image/svg+xml"}]
-    }
+    manifest = { "name": "Network Analyzer PRO", "short_name": "NetAnalyzer", "start_url": "/", "display": "standalone", "orientation": "any", "background_color": "#1e1e2e", "theme_color": "#89b4fa", "icons": [{"src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iIzFlMWUyZSIvPjxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjQwIiBmaWxsPSJub25lIiBzdHJva2U9IiM4OWI0ZmEiIHN0cm9rZS13aWR0aD0iOCIvPjxwb2x5bGluZSBwb2ludHM9IjMwLDUwIDQ1LDY1IDcwLDM1IiBmaWxsPSJub25lIiBzdHJva2U9IiNhNmUzYTEiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+", "sizes": "192x192", "type": "image/svg+xml"}] }
     return jsonify(manifest)
 
 @app.route('/sw.js')
 def serve_sw():
-    sw_code = "self.addEventListener('install', (e) => { self.skipWaiting(); }); self.addEventListener('activate', (e) => { e.waitUntil(clients.claim()); }); self.addEventListener('fetch', (e) => { e.respondWith(fetch(e.request)); });"
-    response = make_response(sw_code)
-    response.headers['Content-Type'] = 'application/javascript'
-    return response
+    return make_response("self.addEventListener('install', (e) => { self.skipWaiting(); }); self.addEventListener('activate', (e) => { e.waitUntil(clients.claim()); }); self.addEventListener('fetch', (e) => { e.respondWith(fetch(e.request)); });", 200, {'Content-Type': 'application/javascript'})
 
-# --- FRONT-END CENTRAL ---
 @app.route('/')
 def dashboard():
     html = """
@@ -373,10 +357,9 @@ def dashboard():
             document.getElementById('btn-close-pwa').addEventListener('click', () => { document.getElementById('pwa-install-popup').style.display = 'none'; });
             document.getElementById('btn-install-pwa').addEventListener('click', async () => { document.getElementById('pwa-install-popup').style.display = 'none'; if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt = null; } });
 
-            // --- VARIÁVEIS DE SESSÃO VOLÁTIL ---
             let authUser = ""; let authPass = ""; let userRole = ""; 
             let currentSensor = ""; let mainChart = null; let scanInterval = null; let logsInterval = null; let fetchInterval = null;
-            let isConfigUpdating = false; // TRAVA DO EFEITO BUMERANGUE
+            let isConfigUpdating = false; // TRAVA DE 10 SEGUNDOS CONTRA O EFEITO BUMERANGUE
             const colorPalette = ['#89b4fa', '#f9e2af', '#cba6f7', '#94e2d5', '#fab387', '#f38ba8'];
 
             async function doLogin() {
@@ -389,7 +372,6 @@ def dashboard():
                 if(res.status === 200) {
                     const data = await res.json();
                     authUser = u; authPass = p; userRole = data.role;
-                    
                     document.getElementById('login-overlay').style.display = 'none';
                     document.getElementById('main-content').style.display = 'block';
                     err.style.display = 'none';
@@ -404,10 +386,7 @@ def dashboard():
                         document.getElementById('role-badge').innerText = "👁️ VIEWER"; 
                         document.getElementById('role-badge').style.color = "#f9e2af";
                     }
-                    
-                    initChart();
-                    fetchMasterData();
-                    fetchInterval = setInterval(fetchMasterData, 1000);
+                    initChart(); fetchMasterData(); fetchInterval = setInterval(fetchMasterData, 1000);
                 } else { err.style.display = 'block'; }
             }
 
@@ -442,13 +421,12 @@ def dashboard():
                 }
             }
 
-            // FUNÇÃO ATUALIZADA - CONGELA O BUMERANGUE
             async function enviarNovaConfig() {
                 if(!currentSensor) return;
                 
-                isConfigUpdating = true; // ATIVA A TRAVA
+                isConfigUpdating = true; // ATIVA A TRAVA DE 10 SEGUNDOS
                 const btn = document.getElementById('btn-aplicar');
-                btn.innerText = "⏳ Aplicando na Usina...";
+                btn.innerText = "⏳ Aplicando mudanças..."; // NOVO TEXTO APLICADO
                 btn.disabled = true;
 
                 const r_ip = document.getElementById('remote-router').value;
@@ -457,25 +435,23 @@ def dashboard():
                 
                 if(res.status === 401) return lockScreen();
                 
-                // Dá 4 segundos para a Nuvem parar de "atualizar a caixa" enquanto o sensor obedece
+                // 10 SEGUNDOS: O sensor agora tem muito tempo pra fazer o ping e devolver os dados sem bugar a tela!
                 setTimeout(() => {
                     isConfigUpdating = false;
                     btn.innerText = "💾 Aplicar Mudanças";
                     btn.disabled = false;
-                }, 4000);
+                }, 10000);
             }
             
             async function enviarComando(cmd) {
                 if(!currentSensor) return;
                 let payload = {sensor_id: currentSensor, comando: cmd};
-                
                 if(cmd === 'GET_LOGS') {
                     const periodVal = document.getElementById('log-period').value;
                     const dateVal = document.getElementById('log-date').value;
                     if(periodVal === 'custom' && !dateVal) return alert("Por favor, selecione uma data no calendário!");
                     payload.period = periodVal; payload.date = dateVal;
                 }
-                
                 const res = await fetch('/api/enviar_comando', { method: 'POST', headers: getHeaders(), body: JSON.stringify(payload) });
                 if(res.status === 401) return lockScreen();
                 
@@ -586,7 +562,6 @@ def dashboard():
                     if(currentSensor && sensores_dados[currentSensor]) {
                         const sData = sensores_dados[currentSensor].data;
                         
-                        // LÓGICA DE SEGURANÇA: Se você está digitando ou salvando, ele não muda os números pra evitar o "bumerangue"
                         if(!isConfigUpdating) {
                             if(document.activeElement.id !== 'remote-router') document.getElementById('remote-router').value = sData.config.router_ip;
                             if(document.activeElement.id !== 'remote-externals') document.getElementById('remote-externals').value = sData.config.external_targets.join(', ');
