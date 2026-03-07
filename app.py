@@ -50,7 +50,7 @@ def registrar_alerta(sensor_id, msg, level="warning"):
     if len(eventos_criticos) > 50: eventos_criticos.pop(0)
 
 # =====================================================================
-# --- NOVO: MOTOR DO SENSOR VIRTUAL DA NUVEM (AGENTLESS) ---
+# --- MOTOR DO SENSOR VIRTUAL DA NUVEM (BLINDADO) ---
 # =====================================================================
 CLOUD_CONFIG = {
     "external_targets": ["google.com", "cloudflare.com"]
@@ -58,11 +58,9 @@ CLOUD_CONFIG = {
 cloud_latency_history = []
 
 def ping_hibrido(target):
-    """ Tenta ICMP Ping. Se a nuvem bloquear, tenta TCP Ping (Porta 443/80) """
     param = '-n' if platform.system().lower() == 'windows' else '-c'
     command = ['ping', param, '1', '-w', '2', target] if platform.system().lower() == 'windows' else ['ping', param, '1', '-W', '2', target]
     
-    # 1. Tenta Ping ICMP Nativo
     try:
         output = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if output.returncode == 0:
@@ -70,7 +68,6 @@ def ping_hibrido(target):
             if match: return target, float(match.group(1))
     except: pass
     
-    # 2. Se ICMP falhou (bloqueio do Render), tenta TCP HTTPS
     try:
         start = time.time()
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -81,7 +78,6 @@ def ping_hibrido(target):
         return target, round(ms, 1)
     except: pass
     
-    # 3. Tenta TCP HTTP padrão
     try:
         start = time.time()
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -94,46 +90,48 @@ def ping_hibrido(target):
 
 def cloud_monitor_thread():
     while True:
-        timestamp_full = datetime.utcnow() - timedelta(hours=3)
-        time_str = timestamp_full.strftime("%H:%M:%S")
-        
-        targets = CLOUD_CONFIG["external_targets"]
-        results = {}
-        
-        if targets:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                future_to_target = {executor.submit(ping_hibrido, t): t for t in targets}
-                for future in concurrent.futures.as_completed(future_to_target):
-                    t, ms = future.result()
-                    results[t] = ms
+        try: # <-- BLINDAGEM ADICIONADA AQUI
+            timestamp_full = datetime.utcnow() - timedelta(hours=3)
+            time_str = timestamp_full.strftime("%H:%M:%S")
             
-            cloud_latency_history.append({"time": time_str, "latencies": results})
-            if len(cloud_latency_history) > 20: cloud_latency_history.pop(0)
+            targets = CLOUD_CONFIG["external_targets"]
+            results = {}
+            
+            if targets:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                    future_to_target = {executor.submit(ping_hibrido, t): t for t in targets}
+                    for future in concurrent.futures.as_completed(future_to_target):
+                        t, ms = future.result()
+                        results[t] = ms
+                
+                cloud_latency_history.append({"time": time_str, "latencies": results})
+                if len(cloud_latency_history) > 20: cloud_latency_history.pop(0)
 
-            falhas = [t for t, ms in results.items() if ms is None]
-            diag = f"[{time_str}] Sensor Virtual Operando OK."
-            if len(falhas) == len(targets): diag = f"[{time_str}] FALHA: Servidor Virtual não alcança alvos."
-            elif falhas: diag = f"[{time_str}] INSTABILIDADE: Falha ao alcançar {', '.join(falhas)}."
+                falhas = [t for t, ms in results.items() if ms is None]
+                diag = f"[{time_str}] Sensor Virtual Operando OK."
+                if len(falhas) == len(targets): diag = f"[{time_str}] FALHA: Servidor Virtual não alcança alvos."
+                elif falhas: diag = f"[{time_str}] INSTABILIDADE: Falha ao alcançar {', '.join(falhas)}."
 
-            # Injeta o próprio servidor como um sensor na lista
-            sensores_conectados["☁️ SERVIDOR NUVEM (Virtual)"] = {
-                "last_ping": time.time(),
-                "data": {
-                    "sensor_id": "☁️ SERVIDOR NUVEM (Virtual)",
-                    "diagnostics": diag,
-                    "current_latencies": results,
-                    "global_latencies": {},
-                    "global_targets": {},
-                    "latency_history": cloud_latency_history,
-                    "config": {
-                        "router_ip": "N/A (Nuvem)",
-                        "external_targets": targets
+                sensores_conectados["☁️ SERVIDOR NUVEM (Virtual)"] = {
+                    "last_ping": time.time(),
+                    "data": {
+                        "sensor_id": "☁️ SERVIDOR NUVEM (Virtual)",
+                        "diagnostics": diag,
+                        "current_latencies": results,
+                        "global_latencies": {},
+                        "global_targets": {},
+                        "latency_history": cloud_latency_history,
+                        "config": {
+                            "router_ip": "N/A (Nuvem)",
+                            "external_targets": targets
+                        }
                     }
                 }
-            }
+        except Exception as e:
+            print(f"Erro ignorado no motor virtual: {e}")
+            
         time.sleep(2)
 
-# Inicia o motor virtual assim que o app liga
 threading.Thread(target=cloud_monitor_thread, daemon=True).start()
 # =====================================================================
 
@@ -162,7 +160,6 @@ def get_sensores():
     agora = time.time()
     ativos = {}
     for s_id, s_data in list(sensores_conectados.items()):
-        # Se for o virtual, mantém ativo. Senão, regra de 15s.
         if s_id == "☁️ SERVIDOR NUVEM (Virtual)" or agora - s_data['last_ping'] < 15:
             ativos[s_id] = s_data
         else:
@@ -185,7 +182,6 @@ def enviar_comando():
     sensor_id = dados.get("sensor_id")
     comando = dados.get("comando")
     
-    # TRATA COMANDO PARA O SENSOR VIRTUAL
     if sensor_id == "☁️ SERVIDOR NUVEM (Virtual)" and comando == "UPDATE_CONFIG":
         CLOUD_CONFIG["external_targets"] = [t.strip() for t in dados.get("external_targets", "").split(',') if t.strip()]
         cloud_latency_history.clear()
@@ -243,7 +239,6 @@ def dashboard():
         <meta name="theme-color" content="#89b4fa">
         <meta name="apple-mobile-web-app-capable" content="yes">
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-        <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iIzFlMWUyZSIvPjxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjQwIiBmaWxsPSJub25lIiBzdHJva2U9IiM4OWI0ZmEiIHN0cm9rZS13aWR0aD0iOCIvPjxwb2x5bGluZSBwb2ludHM9IjMwLDUwIDQ1LDY1IDcwLDM1IiBmaWxsPSJub25lIiBzdHJva2U9IiNhNmUzYTEiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+">
         
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
@@ -450,7 +445,6 @@ def dashboard():
                     document.getElementById('sidebar-container').style.display = 'flex';
                     document.getElementById('offline-alert').style.display = 'none';
                     
-                    // Lógica para bloquear os botões C2 se for o Servidor Virtual
                     if(currentSensor === "☁️ SERVIDOR NUVEM (Virtual)") {{
                         if(userRole === "admin") document.getElementById('admin-c2-panel').style.display = 'none';
                         document.getElementById('remote-router').disabled = true;
@@ -530,83 +524,3 @@ def dashboard():
                     if(alertas_dados.length === 0) {{
                         alertasTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#a6e3a1; font-weight:bold;">Tudo OK! Nenhuma falha detectada.</td></tr>';
                     }} else {{
-                        alertasTbody.innerHTML = '';
-                        alertas_dados.forEach(alerta => {{
-                            const corClasse = alerta.level === 'error' ? 'alert-error' : 'alert-warning';
-                            alertasTbody.innerHTML += `<tr>
-                                <td>${{alerta.time}}</td>
-                                <td><span class="sensor-badge">${{alerta.sensor_id}}</span></td>
-                                <td class="${{corClasse}}">${{alerta.msg}}</td>
-                            </tr>`;
-                        }});
-                    }}
-
-                    const select = document.getElementById('sensor-select');
-                    const oldVal = select.value;
-                    let optionsHTML = '<option value="">-- Selecione uma Máquina --</option>';
-                    for(const s_id in sensores_dados) {{
-                        let icone = s_id.includes("NUVEM") ? "☁️" : "🟢";
-                        optionsHTML += `<option value="${{s_id}}">${{icone}} Sensor Online: ${{s_id}}</option>`;
-                    }}
-                    if(Object.keys(sensores_dados).length === 0) optionsHTML = '<option value="">🔴 Nenhum sensor online</option>';
-                    
-                    select.innerHTML = optionsHTML;
-                    if(sensores_dados[oldVal]) select.value = oldVal; else currentSensor = "";
-
-                    if(currentSensor && sensores_dados[currentSensor]) {{
-                        const sData = sensores_dados[currentSensor].data;
-                        
-                        if(document.activeElement.id !== 'remote-router' && currentSensor !== "☁️ SERVIDOR NUVEM (Virtual)") 
-                            document.getElementById('remote-router').value = sData.config.router_ip;
-                        if(document.activeElement.id !== 'remote-externals') 
-                            document.getElementById('remote-externals').value = sData.config.external_targets.join(', ');
-                        
-                        const diagBox = document.getElementById('diag-box');
-                        diagBox.innerText = sData.diagnostics;
-                        if (sData.diagnostics.includes("LOOP")) diagBox.className = "status-box warning";
-                        else if (sData.diagnostics.includes("FALHA")) diagBox.className = "status-box error";
-                        else diagBox.className = "status-box ok";
-
-                        const targetsContainer = document.getElementById('targets-container');
-                        targetsContainer.innerHTML = '';
-                        for (const [target, ms] of Object.entries(sData.current_latencies)) {{
-                            let statusClass = ms === null ? 'offline' : 'online';
-                            let displayMs = ms === null ? 'TIMEOUT' : (ms === 'LOOP_L3' ? 'LOOP' : ms + ' ms');
-                            let color = ms === null ? '#f38ba8' : '#a6e3a1';
-                            targetsContainer.innerHTML += `<div class="target-card ${{statusClass}}"><div style="font-size: 0.8em; color: #bac2de;">${{target}}</div><div style="color: ${{color}}; font-size: 1.2em; font-weight:bold; margin-top:5px;">${{displayMs}}</div></div>`;
-                        }}
-                        
-                        const globContainer = document.getElementById('globals-container');
-                        globContainer.innerHTML = '';
-                        for (const [name, ip] of Object.entries(sData.global_targets)) {{
-                            const msVal = sData.global_latencies[name];
-                            let display = msVal === null ? '<span style="color:#f38ba8;">TIMEOUT</span>' : `${{msVal}} ms`;
-                            globContainer.innerHTML += `<div class="global-card"><div class="global-header"><div style="font-weight:bold; color:#cdd6f4;">${{name}}</div><div class="global-ms">${{display}}</div></div><div style="font-size:0.7em; color:#6c7086;">IP: ${{ip}}</div></div>`;
-                        }}
-
-                        if (sData.latency_history.length > 0) {{
-                            const newDatasets = []; let colorIndex = 0;
-                            const allTargets = Object.keys(sData.current_latencies);
-                            allTargets.forEach(target => {{
-                                const dataPoints = sData.latency_history.map(p => p.latencies[target] !== undefined ? p.latencies[target] : null);
-                                const color = colorPalette[colorIndex % colorPalette.length]; colorIndex++;
-                                newDatasets.push({{ label: target, borderColor: color, backgroundColor: color, borderWidth: 2, data: dataPoints, tension: 0.3, fill: false }});
-                            }});
-                            mainChart.data.labels = sData.latency_history.map(p => p.time);
-                            mainChart.data.datasets = newDatasets;
-                            mainChart.update();
-                        }}
-                    }} else {{ changeSensor(); }}
-                }} catch (e) {{ console.error(e); }}
-            }}
-
-            initChart();
-            setInterval(fetchMasterData, 1000);
-        </script>
-    </body>
-    </html>
-    """
-    return render_template_string(html)
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
