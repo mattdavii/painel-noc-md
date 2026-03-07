@@ -158,7 +158,7 @@ def serve_sw():
 # --- FRONT-END CENTRAL ---
 @app.route('/')
 def dashboard():
-    html = f"""
+    html = """
     <!DOCTYPE html>
     <html lang="pt-BR">
     <head>
@@ -173,71 +173,71 @@ def dashboard():
         <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
         
         <style>
-            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e2e; color: #cdd6f4; margin: 0; padding: 20px; }}
-            .noc-layout {{ display: grid; grid-template-columns: 3fr 1fr; gap: 20px; max-width: 1500px; margin: 0 auto; align-items: start;}}
-            .main-panel {{ background: #313244; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }}
-            .side-panel {{ background: #1e1e2e; display: flex; flex-direction: column; gap: 15px; position: sticky; top: 15px; align-self: start; }}
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e2e; color: #cdd6f4; margin: 0; padding: 20px; }
+            .noc-layout { display: grid; grid-template-columns: 3fr 1fr; gap: 20px; max-width: 1500px; margin: 0 auto; align-items: start;}
+            .main-panel { background: #313244; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+            .side-panel { background: #1e1e2e; display: flex; flex-direction: column; gap: 15px; position: sticky; top: 15px; align-self: start; }
             
-            @media (max-width: 900px) {{ .noc-layout {{ grid-template-columns: 1fr; }} .side-panel {{ position: static; }} }}
+            @media (max-width: 900px) { .noc-layout { grid-template-columns: 1fr; } .side-panel { position: static; } }
             
-            h1 {{ color: #89b4fa; text-align: center; margin-top: 0; }}
-            .brand-header {{ text-align: center; font-size: 0.75em; color: #6c7086; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 5px; font-weight: bold; }}
+            h1 { color: #89b4fa; text-align: center; margin-top: 0; }
+            .brand-header { text-align: center; font-size: 0.75em; color: #6c7086; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 5px; font-weight: bold; }
             
-            .global-alerts-container {{ background: #181825; border-left: 4px solid #f38ba8; padding: 15px; border-radius: 8px; margin-bottom: 20px; max-height: 250px; overflow-y: auto; }}
-            .alerts-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }}
-            .btn-clear-alerts {{ background: #45475a; color: #cdd6f4; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8em; }}
-            .alert-table {{ width: 100%; border-collapse: collapse; font-size: 0.9em; }}
-            .alert-table th, .alert-table td {{ padding: 8px; border-bottom: 1px solid #313244; text-align: left; }}
-            .alert-table th {{ color: #bac2de; position: sticky; top: 0; background: #181825; }}
-            .alert-error {{ color: #f38ba8; font-weight: bold; }}
-            .alert-warning {{ color: #f9e2af; font-weight: bold; }}
-            .sensor-badge {{ background: #313244; padding: 3px 8px; border-radius: 4px; color: #89b4fa; font-family: monospace; font-size: 0.9em; }}
+            .global-alerts-container { background: #181825; border-left: 4px solid #f38ba8; padding: 15px; border-radius: 8px; margin-bottom: 20px; max-height: 250px; overflow-y: auto; }
+            .alerts-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+            .btn-clear-alerts { background: #45475a; color: #cdd6f4; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8em; }
+            .alert-table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+            .alert-table th, .alert-table td { padding: 8px; border-bottom: 1px solid #313244; text-align: left; }
+            .alert-table th { color: #bac2de; position: sticky; top: 0; background: #181825; }
+            .alert-error { color: #f38ba8; font-weight: bold; }
+            .alert-warning { color: #f9e2af; font-weight: bold; }
+            .sensor-badge { background: #313244; padding: 3px 8px; border-radius: 4px; color: #89b4fa; font-family: monospace; font-size: 0.9em; }
             
-            .selector-container {{ background: #181825; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; border: 2px solid #a6e3a1; display:flex; justify-content: space-between; align-items: center;}}
-            select {{ padding: 10px; font-size: 1.1em; border-radius: 4px; background: #1e1e2e; color: #a6e3a1; font-weight: bold; border: 1px solid #45475a; min-width: 300px; cursor: pointer; flex: 1; margin: 0 15px;}}
-            @media (max-width: 600px) {{ .selector-container {{ flex-direction: column; gap: 10px; }} select {{ width: 100%; margin: 0; }} }}
+            .selector-container { background: #181825; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; border: 2px solid #a6e3a1; display:flex; justify-content: space-between; align-items: center;}
+            select { padding: 10px; font-size: 1.1em; border-radius: 4px; background: #1e1e2e; color: #a6e3a1; font-weight: bold; border: 1px solid #45475a; min-width: 300px; cursor: pointer; flex: 1; margin: 0 15px;}
+            @media (max-width: 600px) { .selector-container { flex-direction: column; gap: 10px; } select { width: 100%; margin: 0; } }
             
-            .status-box {{ padding: 15px; margin: 15px 0; border-radius: 5px; font-weight: bold; text-align: center; font-size: 1.1em;}}
-            .ok {{ background-color: #a6e3a1; color: #1e1e2e; }}
-            .error {{ background-color: #f38ba8; color: #1e1e2e; }}
-            .warning {{ background-color: #f9e2af; color: #1e1e2e; }}
+            .status-box { padding: 15px; margin: 15px 0; border-radius: 5px; font-weight: bold; text-align: center; font-size: 1.1em;}
+            .ok { background-color: #a6e3a1; color: #1e1e2e; }
+            .error { background-color: #f38ba8; color: #1e1e2e; }
+            .warning { background-color: #f9e2af; color: #1e1e2e; }
             
-            .targets-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 20px;}}
-            .target-card {{ background: #181825; padding: 10px; border-radius: 6px; text-align: center; border-left: 4px solid #45475a;}}
-            .target-card.online {{ border-left-color: #a6e3a1; }}
-            .target-card.offline {{ border-left-color: #f38ba8; }}
+            .targets-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 20px;}
+            .target-card { background: #181825; padding: 10px; border-radius: 6px; text-align: center; border-left: 4px solid #45475a;}
+            .target-card.online { border-left-color: #a6e3a1; }
+            .target-card.offline { border-left-color: #f38ba8; }
             
-            .chart-container {{ position: relative; height: 300px; width: 100%; margin-bottom: 20px; background: #181825; padding: 15px; border-radius: 8px; box-sizing: border-box;}}
-            .offline-msg {{ text-align: center; color: #f38ba8; font-size: 1.2em; margin: 50px 0; display: none;}}
+            .chart-container { position: relative; height: 300px; width: 100%; margin-bottom: 20px; background: #181825; padding: 15px; border-radius: 8px; box-sizing: border-box;}
+            .offline-msg { text-align: center; color: #f38ba8; font-size: 1.2em; margin: 50px 0; display: none;}
             
-            .global-card {{ background: #313244; padding: 10px 15px; border-radius: 8px; border-left: 3px solid #89b4fa;}}
-            .global-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;}}
-            .global-ms {{ font-family: monospace; font-size: 1.1em; color: #a6e3a1;}}
+            .global-card { background: #313244; padding: 10px 15px; border-radius: 8px; border-left: 3px solid #89b4fa;}
+            .global-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;}
+            .global-ms { font-family: monospace; font-size: 1.1em; color: #a6e3a1;}
             
-            button {{ padding: 10px 15px; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; width: 100%; margin-bottom: 10px; transition: 0.2s;}}
-            .btn-scan {{ background: #a6e3a1; color: #1e1e2e; }}
-            .btn-scan:hover {{ background: #94e2d5; }}
-            .btn-logs {{ background: #cba6f7; color: #1e1e2e; margin-bottom:0;}}
-            .btn-logs:hover {{ background: #b4befe; }}
-            .btn-danger {{ background: #f38ba8; color: #1e1e2e; }}
-            .btn-danger:hover {{ background: #eba0ac; }}
-            .btn-save {{ background: #89b4fa; color: #1e1e2e; }}
+            button { padding: 10px 15px; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; width: 100%; margin-bottom: 10px; transition: 0.2s;}
+            .btn-scan { background: #a6e3a1; color: #1e1e2e; }
+            .btn-scan:hover { background: #94e2d5; }
+            .btn-logs { background: #cba6f7; color: #1e1e2e; margin-bottom:0;}
+            .btn-logs:hover { background: #b4befe; }
+            .btn-danger { background: #f38ba8; color: #1e1e2e; }
+            .btn-danger:hover { background: #eba0ac; }
+            .btn-save { background: #89b4fa; color: #1e1e2e; }
             
-            #scanner-modal {{ display: none; position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center;}}
-            .modal-content {{ background: #313244; padding: 20px; border-radius: 8px; width: 80%; max-width: 800px; max-height: 80vh; overflow-y: auto;}}
-            .close-btn {{ float: right; cursor: pointer; color: #f38ba8; font-weight: bold; font-size: 1.2em;}}
-            table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }} th, td {{ padding: 10px; border-bottom: 1px solid #45475a; text-align: left; }} th {{ color: #bac2de; }}
+            #scanner-modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center;}
+            .modal-content { background: #313244; padding: 20px; border-radius: 8px; width: 80%; max-width: 800px; max-height: 80vh; overflow-y: auto;}
+            .close-btn { float: right; cursor: pointer; color: #f38ba8; font-weight: bold; font-size: 1.2em;}
+            table { width: 100%; border-collapse: collapse; margin-top: 15px; } th, td { padding: 10px; border-bottom: 1px solid #45475a; text-align: left; } th { color: #bac2de; }
             
-            .input-group {{ display: flex; flex-direction: column; flex: 1; min-width: 150px; text-align:left;}}
-            .input-group label {{ margin-bottom: 5px; font-size: 0.85em; color: #bac2de; font-weight: bold;}}
-            input[type="text"], input[type="date"] {{ padding: 8px; border: 1px solid #45475a; border-radius: 4px; background: #1e1e2e; color: #cdd6f4; width: 95%; box-sizing: border-box;}}
+            .input-group { display: flex; flex-direction: column; flex: 1; min-width: 150px; text-align:left;}
+            .input-group label { margin-bottom: 5px; font-size: 0.85em; color: #bac2de; font-weight: bold;}
+            input[type="text"], input[type="date"] { padding: 8px; border: 1px solid #45475a; border-radius: 4px; background: #1e1e2e; color: #cdd6f4; width: 95%; box-sizing: border-box;}
 
-            .pwa-popup {{ display: none; position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #313244; padding: 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); border: 2px solid #89b4fa; z-index: 9999; text-align: center; width: 90%; max-width: 400px;}}
-            .pwa-popup p {{ margin: 0 0 15px 0; color: #cdd6f4; font-weight: bold; font-size: 1.1em; }}
-            .btn-install-pwa {{ background: #a6e3a1; color: #1e1e2e; width: 48%; margin: 0; }}
-            .btn-close-pwa {{ background: #45475a; color: #cdd6f4; width: 48%; margin: 0; }}
+            .pwa-popup { display: none; position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #313244; padding: 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); border: 2px solid #89b4fa; z-index: 9999; text-align: center; width: 90%; max-width: 400px;}
+            .pwa-popup p { margin: 0 0 15px 0; color: #cdd6f4; font-weight: bold; font-size: 1.1em; }
+            .btn-install-pwa { background: #a6e3a1; color: #1e1e2e; width: 48%; margin: 0; }
+            .btn-close-pwa { background: #45475a; color: #cdd6f4; width: 48%; margin: 0; }
             
-            .box-forense {{ background: #181825; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #cba6f7;}}
+            .box-forense { background: #181825; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #cba6f7;}
         </style>
     </head>
     <body>
@@ -345,87 +345,88 @@ def dashboard():
 
         <script>
             let deferredPrompt;
-            if ('serviceWorker' in navigator) {{ window.addEventListener('load', () => {{ navigator.serviceWorker.register('/sw.js'); }}); }}
-            window.addEventListener('beforeinstallprompt', (e) => {{ e.preventDefault(); deferredPrompt = e; document.getElementById('pwa-install-popup').style.display = 'block'; }});
-            document.getElementById('btn-close-pwa').addEventListener('click', () => {{ document.getElementById('pwa-install-popup').style.display = 'none'; }});
-            document.getElementById('btn-install-pwa').addEventListener('click', async () => {{ document.getElementById('pwa-install-popup').style.display = 'none'; if (deferredPrompt) {{ deferredPrompt.prompt(); deferredPrompt = null; }} }});
+            if ('serviceWorker' in navigator) { window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js'); }); }
+            window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredPrompt = e; document.getElementById('pwa-install-popup').style.display = 'block'; });
+            document.getElementById('btn-close-pwa').addEventListener('click', () => { document.getElementById('pwa-install-popup').style.display = 'none'; });
+            document.getElementById('btn-install-pwa').addEventListener('click', async () => { document.getElementById('pwa-install-popup').style.display = 'none'; if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt = null; } });
 
-            const userRole = "{request.user_role}"; 
+            // AQUI É ONDE O FLASK INJETA O NÍVEL DO USUÁRIO SEM QUEBRAR O JAVASCRIPT!
+            const userRole = "{{ user_role }}"; 
+            
             let currentSensor = ""; let mainChart = null; let scanInterval = null; let logsInterval = null;
             const colorPalette = ['#89b4fa', '#f9e2af', '#cba6f7', '#94e2d5', '#fab387', '#f38ba8'];
 
-            window.onload = () => {{
-                if(userRole === "admin") {{
+            window.onload = () => {
+                if(userRole === "admin") {
                     document.getElementById('role-badge').innerText = "👨‍💻 ADMIN"; document.getElementById('role-badge').style.color = "#a6e3a1";
                     document.getElementById('admin-config-panel').style.display = "block"; document.getElementById('admin-c2-panel').style.display = "block"; document.getElementById('btn-clear-alerts').style.display = "block";
-                }} else {{
+                } else {
                     document.getElementById('role-badge').innerText = "👁️ VIEWER"; document.getElementById('role-badge').style.color = "#f9e2af";
-                }}
-            }};
+                }
+            };
             
-            function toggleDateInput() {{
+            function toggleDateInput() {
                 const val = document.getElementById('log-period').value;
                 document.getElementById('log-date').style.display = val === 'custom' ? 'block' : 'none';
-            }}
+            }
 
-            function initChart() {{
+            function initChart() {
                 const ctx = document.getElementById('mainChart').getContext('2d');
-                mainChart = new Chart(ctx, {{ type: 'line', data: {{ labels: [], datasets: [] }}, options: {{ responsive: true, maintainAspectRatio: false, animation: {{ duration: 0 }}, scales: {{ y: {{ beginAtZero: true, grid: {{ color: '#45475a' }} }}, x: {{ grid: {{ color: '#45475a' }} }} }}, plugins: {{ legend: {{ labels: {{ color: '#cdd6f4' }} }} }} }} }});
-            }}
+                mainChart = new Chart(ctx, { type: 'line', data: { labels: [], datasets: [] }, options: { responsive: true, maintainAspectRatio: false, animation: { duration: 0 }, scales: { y: { beginAtZero: true, grid: { color: '#45475a' } }, x: { grid: { color: '#45475a' } } }, plugins: { legend: { labels: { color: '#cdd6f4' } } } } });
+            }
 
-            function changeSensor() {{
+            function changeSensor() {
                 currentSensor = document.getElementById('sensor-select').value;
-                if(currentSensor) {{
+                if(currentSensor) {
                     document.getElementById('dashboard-content').style.display = 'block'; document.getElementById('sidebar-container').style.display = 'flex'; document.getElementById('offline-alert').style.display = 'none';
                     fetchMasterData();
-                }} else {{
+                } else {
                     document.getElementById('dashboard-content').style.display = 'none'; document.getElementById('sidebar-container').style.display = 'none'; document.getElementById('offline-alert').style.display = 'block';
-                }}
-            }}
+                }
+            }
             
-            async function enviarComando(cmd) {{
+            async function enviarComando(cmd) {
                 if(!currentSensor) return;
                 
-                // AQUI ESTAVA O PROBLEMA: As chaves {{ }} precisam estar duplas para o f-string do Python funcionar!
-                let payload = {{sensor_id: currentSensor, comando: cmd}};
+                let payload = {sensor_id: currentSensor, comando: cmd};
                 
-                if(cmd === 'GET_LOGS') {{
+                if(cmd === 'GET_LOGS') {
                     const periodVal = document.getElementById('log-period').value;
                     const dateVal = document.getElementById('log-date').value;
                     if(periodVal === 'custom' && !dateVal) return alert("Por favor, selecione uma data no calendário!");
                     
                     payload.period = periodVal;
                     payload.date = dateVal;
-                }}
+                }
                 
-                await fetch('/api/enviar_comando', {{ method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify(payload) }});
+                await fetch('/api/enviar_comando', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
                 
-                if(cmd === 'SCAN') {{
+                if(cmd === 'SCAN') {
                     document.getElementById('modal-title').innerText = "🔍 Scanner Remoto";
                     document.getElementById('scanner-modal').style.display = 'flex';
                     document.getElementById('scanner-results').innerHTML = '<p style="text-align:center; color:#a6e3a1;">Ordem enviada! Aguardando o Sensor varrer a rede local...</p>';
                     if(scanInterval) clearInterval(scanInterval); scanInterval = setInterval(verificarScan, 2000);
-                }}
+                }
                 
-                if(cmd === 'GET_LOGS') {{
+                if(cmd === 'GET_LOGS') {
                     document.getElementById('modal-title').innerText = "📄 Extração Forense Remota";
                     document.getElementById('scanner-modal').style.display = 'flex';
                     document.getElementById('scanner-results').innerHTML = '<p style="text-align:center; color:#cba6f7;">Avisando o Sensor para ler seu Banco de Dados Local usando o filtro escolhido... O download do PDF iniciará automaticamente.</p>';
                     if(logsInterval) clearInterval(logsInterval); logsInterval = setInterval(verificarLogs, 2000);
-                }}
-            }}
+                }
+            }
 
-            async function verificarLogs() {{
+            async function verificarLogs() {
                 const res = await fetch('/api/ler_logs?sensor_id=' + currentSensor);
                 const data = await res.json();
-                if(data.status === "pronto") {{
+                if(data.status === "pronto") {
                     clearInterval(logsInterval);
                     document.getElementById('scanner-modal').style.display = 'none';
                     gerarPDF(data.logs);
-                }}
-            }}
+                }
+            }
 
-            async function gerarPDF(logsData) {{
+            async function gerarPDF(logsData) {
                 if(logsData.length === 0) return alert("O banco de dados da Usina não possui NENHUM registro de erro neste período.");
 
                 const { jsPDF } = window.jspdf; const doc = new jsPDF('landscape');
@@ -433,84 +434,84 @@ def dashboard():
                 doc.setTextColor(255, 255, 255); doc.setFontSize(16); doc.setFont("helvetica", "bold");
                 doc.text(`Network Analyzer PRO - Relatorio Forense [${currentSensor}]`, 14, 16);
                 
-                const tableData = logsData.map(log => {{
+                const tableData = logsData.map(log => {
                     let cleanMessage = log.message.replace(/\[Status no momento: (.*?)\]/g, '\\n>> Latências: $1');
                     return [log.time, log.level.toUpperCase(), cleanMessage];
-                }});
+                });
 
-                doc.autoTable({{
+                doc.autoTable({
                     startY: 35, head: [['Data / Hora', 'Nível', 'Descrição do Evento (Registrado Localmente)']], body: tableData, theme: 'grid',
-                    styles: {{ fontSize: 9, cellPadding: 3 }}, headStyles: {{ fillColor: [49, 50, 68] }},
-                    willDrawCell: function (data) {{
-                        if (data.section === 'body' && data.column.index === 1) {{
+                    styles: { fontSize: 9, cellPadding: 3 }, headStyles: { fillColor: [49, 50, 68] },
+                    willDrawCell: function (data) {
+                        if (data.section === 'body' && data.column.index === 1) {
                             if (data.cell.raw === 'ERROR') doc.setTextColor(220, 53, 69);
                             else if (data.cell.raw === 'WARNING') doc.setTextColor(253, 126, 20);
                             else doc.setTextColor(13, 110, 253);
-                        }}
+                        }
                         if (data.section === 'body' && data.column.index === 2) doc.setTextColor(60);
-                    }}
-                }});
+                    }
+                });
                 
                 let dataHoje = new Date().toISOString().split('T')[0];
                 doc.save(`Relatorio_${currentSensor}_${dataHoje}.pdf`);
-            }}
+            }
             
-            async function enviarNovaConfig() {{
+            async function enviarNovaConfig() {
                 if(!currentSensor) return;
                 const r_ip = document.getElementById('remote-router').value;
                 const e_tg = document.getElementById('remote-externals').value;
-                await fetch('/api/enviar_comando', {{ method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{sensor_id: currentSensor, comando: "UPDATE_CONFIG", router_ip: r_ip, external_targets: e_tg}}) }});
+                await fetch('/api/enviar_comando', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({sensor_id: currentSensor, comando: "UPDATE_CONFIG", router_ip: r_ip, external_targets: e_tg}) });
                 alert("Ordem enviada! Sensor aplicará em instantes.");
-            }}
+            }
 
-            function confirmarDesinstalacao() {{
-                if(confirm("⚠️ ATENÇÃO EXTREMA!\\n\\nO executável irá se APAGAR PERMANENTEMENTE do cliente.\\n\\nDeseja explodir o sensor remotamente?")) {{
+            function confirmarDesinstalacao() {
+                if(confirm("⚠️ ATENÇÃO EXTREMA!\\n\\nO executável irá se APAGAR PERMANENTEMENTE do cliente.\\n\\nDeseja explodir o sensor remotamente?")) {
                     enviarComando('UNINSTALL');
                     alert("Ordem de Auto-destruição enviada.");
-                }}
-            }}
+                }
+            }
 
-            async function limparAlertasGlobais() {{ await fetch('/api/limpar_alertas', {{ method: 'POST' }}); }}
+            async function limparAlertasGlobais() { await fetch('/api/limpar_alertas', { method: 'POST' }); }
 
-            async function verificarScan() {{
+            async function verificarScan() {
                 const res = await fetch('/api/ler_scan?sensor_id=' + currentSensor);
                 const data = await res.json();
-                if(data.status === "pronto") {{
+                if(data.status === "pronto") {
                     clearInterval(scanInterval);
                     let html = `<table><thead><tr><th>IP Encontrado</th><th>Hostname</th></tr></thead><tbody>`;
-                    data.devices.forEach(d => html += `<tr><td style="color:#a6e3a1; font-weight:bold;">${{d.ip}}</td><td>${{d.hostname}}</td></tr>`);
-                    html += `</tbody></table><p style="text-align:right; font-size:0.8em; color:#a6adc8;">Total: ${{data.devices.length}} disp.</p>`;
+                    data.devices.forEach(d => html += `<tr><td style="color:#a6e3a1; font-weight:bold;">${d.ip}</td><td>${d.hostname}</td></tr>`);
+                    html += `</tbody></table><p style="text-align:right; font-size:0.8em; color:#a6adc8;">Total: ${data.devices.length} disp.</p>`;
                     document.getElementById('scanner-results').innerHTML = html;
-                }}
-            }}
+                }
+            }
 
-            async function fetchMasterData() {{
-                try {{
+            async function fetchMasterData() {
+                try {
                     const res = await fetch('/api/sensores');
                     const masterData = await res.json();
-                    const sensores_dados = masterData.sensores || {{}};
+                    const sensores_dados = masterData.sensores || {};
                     const alertas_dados = masterData.alertas || [];
                     
                     const alertasTbody = document.getElementById('global-alerts-body');
-                    if(alertas_dados.length === 0) {{ alertasTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#a6e3a1; font-weight:bold;">Tudo OK! Nenhuma falha detectada.</td></tr>';
-                    }} else {{
+                    if(alertas_dados.length === 0) { alertasTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#a6e3a1; font-weight:bold;">Tudo OK! Nenhuma falha detectada.</td></tr>';
+                    } else {
                         alertasTbody.innerHTML = '';
-                        alertas_dados.forEach(alerta => {{
+                        alertas_dados.forEach(alerta => {
                             const corClasse = alerta.level === 'error' ? 'alert-error' : 'alert-warning';
-                            alertasTbody.innerHTML += `<tr><td>${{alerta.time}}</td><td><span class="sensor-badge">${{alerta.sensor_id}}</span></td><td class="${{corClasse}}">${{alerta.msg}}</td></tr>`;
-                        }});
-                    }}
+                            alertasTbody.innerHTML += `<tr><td>${alerta.time}</td><td><span class="sensor-badge">${alerta.sensor_id}</span></td><td class="${corClasse}">${alerta.msg}</td></tr>`;
+                        });
+                    }
 
                     const select = document.getElementById('sensor-select');
                     const oldVal = select.value;
                     let optionsHTML = '<option value="">-- Selecione uma Máquina --</option>';
-                    for(const s_id in sensores_dados) optionsHTML += `<option value="${{s_id}}">🟢 Online: ${{s_id}}</option>`;
+                    for(const s_id in sensores_dados) optionsHTML += `<option value="${s_id}">🟢 Online: ${s_id}</option>`;
                     if(Object.keys(sensores_dados).length === 0) optionsHTML = '<option value="">🔴 Nenhum sensor online</option>';
                     
                     select.innerHTML = optionsHTML;
                     if(sensores_dados[oldVal]) select.value = oldVal; else currentSensor = "";
 
-                    if(currentSensor && sensores_dados[currentSensor]) {{
+                    if(currentSensor && sensores_dados[currentSensor]) {
                         const sData = sensores_dados[currentSensor].data;
                         if(document.activeElement.id !== 'remote-router') document.getElementById('remote-router').value = sData.config.router_ip;
                         if(document.activeElement.id !== 'remote-externals') document.getElementById('remote-externals').value = sData.config.external_targets.join(', ');
@@ -521,43 +522,45 @@ def dashboard():
 
                         const targetsContainer = document.getElementById('targets-container');
                         targetsContainer.innerHTML = '';
-                        for (const [target, ms] of Object.entries(sData.current_latencies)) {{
+                        for (const [target, ms] of Object.entries(sData.current_latencies)) {
                             let statusClass = ms === null ? 'offline' : 'online';
                             let displayMs = ms === null ? 'TIMEOUT' : (ms === 'LOOP_L3' ? 'LOOP' : ms + ' ms');
                             let color = ms === null ? '#f38ba8' : '#a6e3a1';
-                            targetsContainer.innerHTML += `<div class="target-card ${{statusClass}}"><div style="font-size: 0.8em; color: #bac2de;">${{target}}</div><div style="color: ${{color}}; font-size: 1.2em; font-weight:bold; margin-top:5px;">${{displayMs}}</div></div>`;
-                        }}
+                            targetsContainer.innerHTML += `<div class="target-card ${statusClass}"><div style="font-size: 0.8em; color: #bac2de;">${target}</div><div style="color: ${color}; font-size: 1.2em; font-weight:bold; margin-top:5px;">${displayMs}</div></div>`;
+                        }
                         
                         const globContainer = document.getElementById('globals-container');
                         globContainer.innerHTML = '';
-                        for (const [name, ip] of Object.entries(sData.global_targets)) {{
+                        for (const [name, ip] of Object.entries(sData.global_targets)) {
                             const msVal = sData.global_latencies[name];
-                            let display = msVal === null ? '<span style="color:#f38ba8;">TIMEOUT</span>' : `${{msVal}} ms`;
-                            globContainer.innerHTML += `<div class="global-card"><div class="global-header"><div style="font-weight:bold; color:#cdd6f4;">${{name}}</div><div class="global-ms">${{display}}</div></div><div style="font-size:0.7em; color:#6c7086;">IP: ${{ip}}</div></div>`;
-                        }}
+                            let display = msVal === null ? '<span style="color:#f38ba8;">TIMEOUT</span>' : `${msVal} ms`;
+                            globContainer.innerHTML += `<div class="global-card"><div class="global-header"><div style="font-weight:bold; color:#cdd6f4;">${name}</div><div class="global-ms">${display}</div></div><div style="font-size:0.7em; color:#6c7086;">IP: ${ip}</div></div>`;
+                        }
 
-                        if (sData.latency_history.length > 0) {{
+                        if (sData.latency_history.length > 0) {
                             const newDatasets = []; let colorIndex = 0;
                             const allTargets = Object.keys(sData.current_latencies);
-                            allTargets.forEach(target => {{
+                            allTargets.forEach(target => {
                                 const dataPoints = sData.latency_history.map(p => p.latencies[target] !== undefined ? p.latencies[target] : null);
                                 const color = colorPalette[colorIndex % colorPalette.length]; colorIndex++;
-                                newDatasets.push({{ label: target, borderColor: color, backgroundColor: color, borderWidth: 2, data: dataPoints, tension: 0.3, fill: false }});
-                            }});
+                                newDatasets.push({ label: target, borderColor: color, backgroundColor: color, borderWidth: 2, data: dataPoints, tension: 0.3, fill: false });
+                            });
                             mainChart.data.labels = sData.latency_history.map(p => p.time);
                             mainChart.data.datasets = newDatasets;
                             mainChart.update();
-                        }}
-                    }} else {{ changeSensor(); }}
-                }} catch (e) {{ console.error(e); }}
-            }}
+                        }
+                    } else { changeSensor(); }
+                } catch (e) { console.error(e); }
+            }
 
             initChart(); setInterval(fetchMasterData, 1000);
         </script>
     </body>
     </html>
     """
-    return render_template_string(html)
+    
+    # É AQUI QUE O FLASK INJETA AS VARIÁVEIS COM SEGURANÇA AGORA
+    return render_template_string(html, user_role=request.user_role)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
