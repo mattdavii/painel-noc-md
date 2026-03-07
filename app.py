@@ -2,11 +2,7 @@ from flask import Flask, jsonify, render_template_string, request, make_response
 from datetime import datetime, timedelta
 import time
 import threading
-import subprocess
-import re
 import socket
-import concurrent.futures
-import platform
 
 app = Flask(__name__)
 
@@ -50,38 +46,31 @@ def registrar_alerta(sensor_id, msg, level="warning"):
     if len(eventos_criticos) > 50: eventos_criticos.pop(0)
 
 # =====================================================================
-# --- MOTOR DO SENSOR VIRTUAL DA NUVEM (BLINDADO) ---
+# --- MOTOR DO SENSOR VIRTUAL DA NUVEM (SOMENTE TCP - À PROVA DE FALHAS) ---
 # =====================================================================
 CLOUD_CONFIG = {
     "external_targets": ["google.com", "cloudflare.com"]
 }
 cloud_latency_history = []
 
-def ping_hibrido(target):
-    param = '-n' if platform.system().lower() == 'windows' else '-c'
-    command = ['ping', param, '1', '-w', '2', target] if platform.system().lower() == 'windows' else ['ping', param, '1', '-W', '2', target]
-    
-    try:
-        output = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if output.returncode == 0:
-            match = re.search(r"(?:time|tempo)\s*[=<]\s*([0-9.]+)", output.stdout, re.IGNORECASE)
-            if match: return target, float(match.group(1))
-    except: pass
-    
+def ping_tcp_nuvem(target):
+    """ Fura o bloqueio do Render usando apenas portas de navegação web """
+    # 1. Tenta HTTPS (Mais comum hoje em dia)
     try:
         start = time.time()
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2.0)
+        sock.settimeout(1.5) # Desiste em 1.5s para nunca travar
         sock.connect((target, 443))
         sock.close()
         ms = (time.time() - start) * 1000
         return target, round(ms, 1)
     except: pass
     
+    # 2. Tenta HTTP Padrão
     try:
         start = time.time()
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2.0)
+        sock.settimeout(1.5)
         sock.connect((target, 80))
         sock.close()
         ms = (time.time() - start) * 1000
@@ -89,8 +78,11 @@ def ping_hibrido(target):
     except: return target, None
 
 def cloud_monitor_thread():
+    # Espera 3 segundos antes de iniciar para garantir que o Flask carregou 100%
+    time.sleep(3) 
+    
     while True:
-        try: # <-- BLINDAGEM ADICIONADA AQUI
+        try:
             timestamp_full = datetime.utcnow() - timedelta(hours=3)
             time_str = timestamp_full.strftime("%H:%M:%S")
             
@@ -98,11 +90,10 @@ def cloud_monitor_thread():
             results = {}
             
             if targets:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                    future_to_target = {executor.submit(ping_hibrido, t): t for t in targets}
-                    for future in concurrent.futures.as_completed(future_to_target):
-                        t, ms = future.result()
-                        results[t] = ms
+                # Usando um loop simples para poupar a memória do Render Gratuito
+                for t in targets:
+                    _, ms = ping_tcp_nuvem(t)
+                    results[t] = ms
                 
                 cloud_latency_history.append({"time": time_str, "latencies": results})
                 if len(cloud_latency_history) > 20: cloud_latency_history.pop(0)
@@ -112,6 +103,7 @@ def cloud_monitor_thread():
                 if len(falhas) == len(targets): diag = f"[{time_str}] FALHA: Servidor Virtual não alcança alvos."
                 elif falhas: diag = f"[{time_str}] INSTABILIDADE: Falha ao alcançar {', '.join(falhas)}."
 
+                # O Sensor Virtual injeta os dados na mesma lista do seu .exe
                 sensores_conectados["☁️ SERVIDOR NUVEM (Virtual)"] = {
                     "last_ping": time.time(),
                     "data": {
@@ -132,6 +124,7 @@ def cloud_monitor_thread():
             
         time.sleep(2)
 
+# Inicia a thread secundária em background
 threading.Thread(target=cloud_monitor_thread, daemon=True).start()
 # =====================================================================
 
@@ -160,6 +153,7 @@ def get_sensores():
     agora = time.time()
     ativos = {}
     for s_id, s_data in list(sensores_conectados.items()):
+        # O servidor nuvem é imortal, os outros caem se ficarem 15s sem enviar ping
         if s_id == "☁️ SERVIDOR NUVEM (Virtual)" or agora - s_data['last_ping'] < 15:
             ativos[s_id] = s_data
         else:
@@ -182,6 +176,7 @@ def enviar_comando():
     sensor_id = dados.get("sensor_id")
     comando = dados.get("comando")
     
+    # Redireciona comando de IP para o Sensor da Nuvem
     if sensor_id == "☁️ SERVIDOR NUVEM (Virtual)" and comando == "UPDATE_CONFIG":
         CLOUD_CONFIG["external_targets"] = [t.strip() for t in dados.get("external_targets", "").split(',') if t.strip()]
         cloud_latency_history.clear()
