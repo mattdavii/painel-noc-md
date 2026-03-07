@@ -524,4 +524,39 @@ def dashboard():
                             let statusClass = ms === null ? 'offline' : 'online';
                             let displayMs = ms === null ? 'TIMEOUT' : (ms === 'LOOP_L3' ? 'LOOP' : ms + ' ms');
                             let color = ms === null ? '#f38ba8' : '#a6e3a1';
-                            targetsContainer.innerHTML += `<div class="target-card ${{statusClass}}"><div style="font-size: 0.8em; color: #bac2de;">${{target}}</div><div style="color: ${{color}}; font-size: 1.2em; font-weight:
+                            targetsContainer.innerHTML += `<div class="target-card ${{statusClass}}"><div style="font-size: 0.8em; color: #bac2de;">${{target}}</div><div style="color: ${{color}}; font-size: 1.2em; font-weight:bold; margin-top:5px;">${{displayMs}}</div></div>`;
+                        }}
+                        
+                        const globContainer = document.getElementById('globals-container');
+                        globContainer.innerHTML = '';
+                        for (const [name, ip] of Object.entries(sData.global_targets)) {{
+                            const msVal = sData.global_latencies[name];
+                            let display = msVal === null ? '<span style="color:#f38ba8;">TIMEOUT</span>' : `${{msVal}} ms`;
+                            globContainer.innerHTML += `<div class="global-card"><div class="global-header"><div style="font-weight:bold; color:#cdd6f4;">${{name}}</div><div class="global-ms">${{display}}</div></div><div style="font-size:0.7em; color:#6c7086;">IP: ${{ip}}</div></div>`;
+                        }}
+
+                        if (sData.latency_history.length > 0) {{
+                            const newDatasets = []; let colorIndex = 0;
+                            const allTargets = Object.keys(sData.current_latencies);
+                            allTargets.forEach(target => {{
+                                const dataPoints = sData.latency_history.map(p => p.latencies[target] !== undefined ? p.latencies[target] : null);
+                                const color = colorPalette[colorIndex % colorPalette.length]; colorIndex++;
+                                newDatasets.push({{ label: target, borderColor: color, backgroundColor: color, borderWidth: 2, data: dataPoints, tension: 0.3, fill: false }});
+                            }});
+                            mainChart.data.labels = sData.latency_history.map(p => p.time);
+                            mainChart.data.datasets = newDatasets;
+                            mainChart.update();
+                        }}
+                    }} else {{ changeSensor(); }}
+                }} catch (e) {{ console.error(e); }}
+            }}
+
+            initChart(); setInterval(fetchMasterData, 1000);
+        </script>
+    </body>
+    </html>
+    """
+    return render_template_string(html)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000)
