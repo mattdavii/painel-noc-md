@@ -386,7 +386,8 @@ def dashboard():
             async function enviarComando(cmd) {{
                 if(!currentSensor) return;
                 
-                let payload = {sensor_id: currentSensor, comando: cmd};
+                // AQUI ESTAVA O PROBLEMA: As chaves {{ }} precisam estar duplas para o f-string do Python funcionar!
+                let payload = {{sensor_id: currentSensor, comando: cmd}};
                 
                 if(cmd === 'GET_LOGS') {{
                     const periodVal = document.getElementById('log-period').value;
