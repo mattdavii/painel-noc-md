@@ -1,8 +1,6 @@
 from flask import Flask, jsonify, render_template_string, request, make_response
 from datetime import datetime, timedelta
 import time
-import threading
-import socket
 
 app = Flask(__name__)
 
@@ -17,127 +15,57 @@ def authenticate():
 
 @app.before_request
 def require_auth():
-    if request.path in ['/api/receber_dados', '/api/receber_scan', '/manifest.json', '/sw.js']:
+    if request.path in ['/api/receber_dados', '/api/receber_scan', '/api/receber_logs', '/manifest.json', '/sw.js']:
         return
+    
     auth = request.authorization
     if not auth or auth.username not in USUARIOS or USUARIOS[auth.username]["senha"] != auth.password:
         return authenticate()
+    
     request.user_role = USUARIOS[auth.username]["role"]
 
 # --- BANCO DE DADOS EM MEMÓRIA ---
 sensores_conectados = {}
 comandos_pendentes = {} 
 resultados_scan = {}
+resultados_logs = {} # NOVO: Memória temporária para receber o banco de dados do sensor
 eventos_criticos = [] 
 
 def registrar_alerta(sensor_id, msg, level="warning"):
     ultimos_deste_sensor = [e for e in eventos_criticos if e["sensor_id"] == sensor_id]
     if ultimos_deste_sensor:
         ultimo_msg = ultimos_deste_sensor[-1]["msg"]
-        if msg in ultimo_msg or ultimo_msg in msg: return
+        if msg in ultimo_msg or ultimo_msg in msg:
+            return
 
     hora_brasil = datetime.utcnow() - timedelta(hours=3)
+
     eventos_criticos.append({
         "time": hora_brasil.strftime("%d/%m %H:%M:%S"),
         "sensor_id": sensor_id,
         "msg": msg,
         "level": level
     })
-    if len(eventos_criticos) > 50: eventos_criticos.pop(0)
-
-# =====================================================================
-# --- MOTOR DO SENSOR VIRTUAL DA NUVEM (SOMENTE TCP - À PROVA DE FALHAS) ---
-# =====================================================================
-CLOUD_CONFIG = {
-    "external_targets": ["google.com", "cloudflare.com"]
-}
-cloud_latency_history = []
-
-def ping_tcp_nuvem(target):
-    """ Fura o bloqueio do Render usando apenas portas de navegação web """
-    # 1. Tenta HTTPS (Mais comum hoje em dia)
-    try:
-        start = time.time()
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(1.5) # Desiste em 1.5s para nunca travar
-        sock.connect((target, 443))
-        sock.close()
-        ms = (time.time() - start) * 1000
-        return target, round(ms, 1)
-    except: pass
     
-    # 2. Tenta HTTP Padrão
-    try:
-        start = time.time()
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(1.5)
-        sock.connect((target, 80))
-        sock.close()
-        ms = (time.time() - start) * 1000
-        return target, round(ms, 1)
-    except: return target, None
-
-def cloud_monitor_thread():
-    # Espera 3 segundos antes de iniciar para garantir que o Flask carregou 100%
-    time.sleep(3) 
-    
-    while True:
-        try:
-            timestamp_full = datetime.utcnow() - timedelta(hours=3)
-            time_str = timestamp_full.strftime("%H:%M:%S")
-            
-            targets = CLOUD_CONFIG["external_targets"]
-            results = {}
-            
-            if targets:
-                # Usando um loop simples para poupar a memória do Render Gratuito
-                for t in targets:
-                    _, ms = ping_tcp_nuvem(t)
-                    results[t] = ms
-                
-                cloud_latency_history.append({"time": time_str, "latencies": results})
-                if len(cloud_latency_history) > 20: cloud_latency_history.pop(0)
-
-                falhas = [t for t, ms in results.items() if ms is None]
-                diag = f"[{time_str}] Sensor Virtual Operando OK."
-                if len(falhas) == len(targets): diag = f"[{time_str}] FALHA: Servidor Virtual não alcança alvos."
-                elif falhas: diag = f"[{time_str}] INSTABILIDADE: Falha ao alcançar {', '.join(falhas)}."
-
-                # O Sensor Virtual injeta os dados na mesma lista do seu .exe
-                sensores_conectados["☁️ SERVIDOR NUVEM (Virtual)"] = {
-                    "last_ping": time.time(),
-                    "data": {
-                        "sensor_id": "☁️ SERVIDOR NUVEM (Virtual)",
-                        "diagnostics": diag,
-                        "current_latencies": results,
-                        "global_latencies": {},
-                        "global_targets": {},
-                        "latency_history": cloud_latency_history,
-                        "config": {
-                            "router_ip": "N/A (Nuvem)",
-                            "external_targets": targets
-                        }
-                    }
-                }
-        except Exception as e:
-            print(f"Erro ignorado no motor virtual: {e}")
-            
-        time.sleep(2)
-
-# Inicia a thread secundária em background
-threading.Thread(target=cloud_monitor_thread, daemon=True).start()
-# =====================================================================
+    if len(eventos_criticos) > 50:
+        eventos_criticos.pop(0)
 
 @app.route('/api/receber_dados', methods=['POST'])
 def receber_dados():
     payload = request.json
     sensor_id = payload.get("sensor_id")
+    
     if sensor_id:
-        sensores_conectados[sensor_id] = {"last_ping": time.time(), "data": payload}
+        sensores_conectados[sensor_id] = {
+            "last_ping": time.time(),
+            "data": payload
+        }
+        
         diag = payload.get("diagnostics", "")
         if any(palavra in diag for palavra in ["LOOP", "FALHA", "SEM INTERNET", "INSTABILIDADE"]):
             nivel = "error" if "FALHA" in diag or "LOOP" in diag else "warning"
             registrar_alerta(sensor_id, diag, nivel)
+        
     comando = comandos_pendentes.pop(sensor_id, None)
     return jsonify({"status": "sucesso", "comando": comando})
 
@@ -148,13 +76,20 @@ def receber_scan():
     resultados_scan[sensor_id] = payload.get("devices", [])
     return jsonify({"status": "recebido"})
 
+# NOVO: Recebe o relatório do banco de dados do cliente
+@app.route('/api/receber_logs', methods=['POST'])
+def receber_logs():
+    payload = request.json
+    sensor_id = payload.get("sensor_id")
+    resultados_logs[sensor_id] = payload.get("logs", [])
+    return jsonify({"status": "recebido"})
+
 @app.route('/api/sensores')
 def get_sensores():
     agora = time.time()
     ativos = {}
     for s_id, s_data in list(sensores_conectados.items()):
-        # O servidor nuvem é imortal, os outros caem se ficarem 15s sem enviar ping
-        if s_id == "☁️ SERVIDOR NUVEM (Virtual)" or agora - s_data['last_ping'] < 15:
+        if agora - s_data['last_ping'] < 15:
             ativos[s_id] = s_data
         else:
             registrar_alerta(s_id, f"🔴 SENSOR DESCONECTADO (Máquina desligada ou sem internet).", "error")
@@ -170,25 +105,23 @@ def limpar_alertas():
 
 @app.route('/api/enviar_comando', methods=['POST'])
 def enviar_comando():
-    if request.user_role != 'admin': return jsonify({"status": "erro", "msg": "Sem permissão"}), 403
+    if request.user_role != 'admin':
+        return jsonify({"status": "erro", "msg": "Sem permissão"}), 403
         
     dados = request.json
     sensor_id = dados.get("sensor_id")
     comando = dados.get("comando")
     
-    # Redireciona comando de IP para o Sensor da Nuvem
-    if sensor_id == "☁️ SERVIDOR NUVEM (Virtual)" and comando == "UPDATE_CONFIG":
-        CLOUD_CONFIG["external_targets"] = [t.strip() for t in dados.get("external_targets", "").split(',') if t.strip()]
-        cloud_latency_history.clear()
-        return jsonify({"status": "enviado"})
-
     pacote = {"comando": comando}
     if comando == "UPDATE_CONFIG":
         pacote["router_ip"] = dados.get("router_ip")
         pacote["external_targets"] = dados.get("external_targets")
         
     comandos_pendentes[sensor_id] = pacote
+    
     if comando == "SCAN": resultados_scan.pop(sensor_id, None) 
+    if comando == "GET_LOGS": resultados_logs.pop(sensor_id, None) # Limpa histórico anterior
+        
     return jsonify({"status": "enviado"})
 
 @app.route('/api/ler_scan')
@@ -197,17 +130,19 @@ def ler_scan():
     if sensor_id in resultados_scan: return jsonify({"status": "pronto", "devices": resultados_scan[sensor_id]})
     return jsonify({"status": "aguardando"})
 
+# NOVO: Front-end pergunta se o relatório do banco de dados já chegou
+@app.route('/api/ler_logs')
+def ler_logs():
+    sensor_id = request.args.get("sensor_id")
+    if sensor_id in resultados_logs: return jsonify({"status": "pronto", "logs": resultados_logs[sensor_id]})
+    return jsonify({"status": "aguardando"})
+
 # --- ROTAS DO PWA ---
 @app.route('/manifest.json')
 def serve_manifest():
     manifest = {
-        "name": "Network Analyzer PRO",
-        "short_name": "NetAnalyzer",
-        "start_url": "/",
-        "display": "standalone",
-        "orientation": "any",  
-        "background_color": "#1e1e2e",
-        "theme_color": "#89b4fa",
+        "name": "Network Analyzer PRO - Central", "short_name": "NetAnalyzer", "start_url": "/", "display": "standalone", "orientation": "any",  
+        "background_color": "#1e1e2e", "theme_color": "#89b4fa",
         "icons": [{"src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iIzFlMWUyZSIvPjxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjQwIiBmaWxsPSJub25lIiBzdHJva2U9IiM4OWI0ZmEiIHN0cm9rZS13aWR0aD0iOCIvPjxwb2x5bGluZSBwb2ludHM9IjMwLDUwIDQ1LDY1IDcwLDM1IiBmaWxsPSJub25lIiBzdHJva2U9IiNhNmUzYTEiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+", "sizes": "192x192", "type": "image/svg+xml"}]
     }
     return jsonify(manifest)
@@ -229,18 +164,19 @@ def dashboard():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
         <title>Network Analyzer PRO - Central</title>
-        
         <link rel="manifest" href="/manifest.json">
         <meta name="theme-color" content="#89b4fa">
-        <meta name="apple-mobile-web-app-capable" content="yes">
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
         
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+        
         <style>
             body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e2e; color: #cdd6f4; margin: 0; padding: 20px; }}
             .noc-layout {{ display: grid; grid-template-columns: 3fr 1fr; gap: 20px; max-width: 1500px; margin: 0 auto; align-items: start;}}
             .main-panel {{ background: #313244; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }}
             .side-panel {{ background: #1e1e2e; display: flex; flex-direction: column; gap: 15px; position: sticky; top: 15px; align-self: start; }}
+            
             @media (max-width: 900px) {{ .noc-layout {{ grid-template-columns: 1fr; }} .side-panel {{ position: static; }} }}
             
             h1 {{ color: #89b4fa; text-align: center; margin-top: 0; }}
@@ -249,7 +185,6 @@ def dashboard():
             .global-alerts-container {{ background: #181825; border-left: 4px solid #f38ba8; padding: 15px; border-radius: 8px; margin-bottom: 20px; max-height: 250px; overflow-y: auto; }}
             .alerts-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }}
             .btn-clear-alerts {{ background: #45475a; color: #cdd6f4; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8em; }}
-            .btn-clear-alerts:hover {{ background: #585b70; }}
             .alert-table {{ width: 100%; border-collapse: collapse; font-size: 0.9em; }}
             .alert-table th, .alert-table td {{ padding: 8px; border-bottom: 1px solid #313244; text-align: left; }}
             .alert-table th {{ color: #bac2de; position: sticky; top: 0; background: #181825; }}
@@ -281,10 +216,11 @@ def dashboard():
             button {{ padding: 10px 15px; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; width: 100%; margin-bottom: 10px; transition: 0.2s;}}
             .btn-scan {{ background: #a6e3a1; color: #1e1e2e; }}
             .btn-scan:hover {{ background: #94e2d5; }}
+            .btn-logs {{ background: #cba6f7; color: #1e1e2e; }}
+            .btn-logs:hover {{ background: #b4befe; }}
             .btn-danger {{ background: #f38ba8; color: #1e1e2e; }}
             .btn-danger:hover {{ background: #eba0ac; }}
             .btn-save {{ background: #89b4fa; color: #1e1e2e; }}
-            .btn-save:hover {{ background: #b4befe; }}
             
             #scanner-modal {{ display: none; position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center;}}
             .modal-content {{ background: #313244; padding: 20px; border-radius: 8px; width: 80%; max-width: 800px; max-height: 80vh; overflow-y: auto;}}
@@ -295,7 +231,7 @@ def dashboard():
             .input-group label {{ margin-bottom: 5px; font-size: 0.85em; color: #bac2de; font-weight: bold;}}
             input[type="text"] {{ padding: 8px; border: 1px solid #45475a; border-radius: 4px; background: #1e1e2e; color: #cdd6f4; width: 95%; box-sizing: border-box;}}
 
-            .pwa-popup {{ display: none; position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #313244; padding: 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); border: 2px solid #89b4fa; z-index: 9999; text-align: center; width: 90%; max-width: 400px; }}
+            .pwa-popup {{ display: none; position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #313244; padding: 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); border: 2px solid #89b4fa; z-index: 9999; text-align: center; width: 90%; max-width: 400px;}}
             .pwa-popup p {{ margin: 0 0 15px 0; color: #cdd6f4; font-weight: bold; font-size: 1.1em; }}
             .btn-install-pwa {{ background: #a6e3a1; color: #1e1e2e; width: 48%; margin: 0; }}
             .btn-close-pwa {{ background: #45475a; color: #cdd6f4; width: 48%; margin: 0; }}
@@ -313,8 +249,8 @@ def dashboard():
         <div id="scanner-modal">
             <div class="modal-content">
                 <span class="close-btn" onclick="document.getElementById('scanner-modal').style.display='none'">✖ Fechar</span>
-                <h2 style="color:#a6e3a1; margin-top:0;">🔍 Resultados do Scanner Remoto</h2>
-                <div id="scanner-results"><p style="text-align:center;">Aguardando o Sensor executar a varredura e enviar os dados... (Isso pode levar 15 segundos)</p></div>
+                <h2 style="color:#a6e3a1; margin-top:0;" id="modal-title">⏳ Executando Ordem Remota...</h2>
+                <div id="scanner-results"><p style="text-align:center;">Aguardando o Sensor...</p></div>
             </div>
         </div>
 
@@ -331,7 +267,7 @@ def dashboard():
                     <table class="alert-table">
                         <thead><tr><th style="width: 25%;">Hora</th><th style="width: 25%;">Máquina</th><th>Incidente</th></tr></thead>
                         <tbody id="global-alerts-body">
-                            <tr><td colspan="3" style="text-align:center; color:#6c7086;">Nenhuma falha detectada recentemente. Rede estável.</td></tr>
+                            <tr><td colspan="3" style="text-align:center; color:#6c7086;">Nenhuma falha detectada.</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -350,7 +286,7 @@ def dashboard():
                     <div id="admin-config-panel" style="background: #181825; padding: 15px; border-radius: 8px; margin-bottom: 20px; display:none;">
                         <h4 style="margin: 0 0 15px 0; color:#89b4fa;">⚙️ Alterar Configurações Remotamente</h4>
                         <div style="display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
-                            <div class="input-group" id="group-router">
+                            <div class="input-group">
                                 <label>Gateway / Roteador</label>
                                 <input type="text" id="remote-router" placeholder="Ex: 192.168.0.1">
                             </div>
@@ -372,59 +308,36 @@ def dashboard():
             <div class="side-panel" id="sidebar-container" style="display:none;">
                 <div id="admin-c2-panel" class="global-card" style="border-left-color: #f9e2af; display:none; margin-bottom: 15px;">
                     <h4 style="margin: 0 0 10px 0; color:#cdd6f4; text-align:center;">Comandos (C2)</h4>
-                    <button class="btn-scan" id="btn-do-scan" onclick="enviarComando('SCAN')">🔍 Escanear Rede Local</button>
-                    <button class="btn-danger" id="btn-do-uninstall" onclick="confirmarDesinstalacao()">🗑️ Auto-Destruir Sensor</button>
+                    <button class="btn-scan" onclick="enviarComando('SCAN')">🔍 Escanear Rede Local</button>
+                    
+                    <button class="btn-logs" onclick="enviarComando('GET_LOGS')">📄 Extrair Relatório (PDF)</button>
+                    
+                    <button class="btn-danger" onclick="confirmarDesinstalacao()">🗑️ Auto-Destruir Sensor</button>
                 </div>
                 
-                <h3 style="color: #bac2de; margin-bottom: 0; text-align:center;" id="lateral-title">🌐 Tráfego Global</h3>
-                <p style="font-size: 0.8em; text-align: center; color: #6c7086; margin-top:0;" id="lateral-subtitle">Visão do cliente</p>
+                <h3 style="color: #bac2de; margin-bottom: 0; text-align:center;">🌐 Tráfego Global</h3>
+                <p style="font-size: 0.8em; text-align: center; color: #6c7086; margin-top:0;">Visão do cliente</p>
                 <div id="globals-container"></div>
             </div>
         </div>
 
         <script>
             let deferredPrompt;
-            const pwaPopup = document.getElementById('pwa-install-popup');
-            const btnInstallPwa = document.getElementById('btn-install-pwa');
-            const btnClosePwa = document.getElementById('btn-close-pwa');
-
-            if ('serviceWorker' in navigator) {{
-                window.addEventListener('load', () => {{
-                    navigator.serviceWorker.register('/sw.js').catch(err => console.error(err));
-                }});
-            }}
-
-            window.addEventListener('beforeinstallprompt', (e) => {{
-                e.preventDefault();
-                deferredPrompt = e;
-                pwaPopup.style.display = 'block';
-            }});
-
-            btnClosePwa.addEventListener('click', () => {{ pwaPopup.style.display = 'none'; }});
-
-            btnInstallPwa.addEventListener('click', async () => {{
-                pwaPopup.style.display = 'none';
-                if (deferredPrompt) {{
-                    deferredPrompt.prompt(); 
-                    const {{ outcome }} = await deferredPrompt.userChoice;
-                    deferredPrompt = null;
-                }}
-            }});
+            if ('serviceWorker' in navigator) {{ window.addEventListener('load', () => {{ navigator.serviceWorker.register('/sw.js'); }}); }}
+            window.addEventListener('beforeinstallprompt', (e) => {{ e.preventDefault(); deferredPrompt = e; document.getElementById('pwa-install-popup').style.display = 'block'; }});
+            document.getElementById('btn-close-pwa').addEventListener('click', () => {{ document.getElementById('pwa-install-popup').style.display = 'none'; }});
+            document.getElementById('btn-install-pwa').addEventListener('click', async () => {{ document.getElementById('pwa-install-popup').style.display = 'none'; if (deferredPrompt) {{ deferredPrompt.prompt(); deferredPrompt = null; }} }});
 
             const userRole = "{request.user_role}"; 
-            let currentSensor = ""; let mainChart = null; let scanInterval = null;
+            let currentSensor = ""; let mainChart = null; let scanInterval = null; let logsInterval = null;
             const colorPalette = ['#89b4fa', '#f9e2af', '#cba6f7', '#94e2d5', '#fab387', '#f38ba8'];
 
             window.onload = () => {{
                 if(userRole === "admin") {{
-                    document.getElementById('role-badge').innerText = "👨‍💻 ADMIN";
-                    document.getElementById('role-badge').style.color = "#a6e3a1";
-                    document.getElementById('admin-config-panel').style.display = "block";
-                    document.getElementById('admin-c2-panel').style.display = "block";
-                    document.getElementById('btn-clear-alerts').style.display = "block";
+                    document.getElementById('role-badge').innerText = "👨‍💻 ADMIN"; document.getElementById('role-badge').style.color = "#a6e3a1";
+                    document.getElementById('admin-config-panel').style.display = "block"; document.getElementById('admin-c2-panel').style.display = "block"; document.getElementById('btn-clear-alerts').style.display = "block";
                 }} else {{
-                    document.getElementById('role-badge').innerText = "👁️ VIEWER";
-                    document.getElementById('role-badge').style.color = "#f9e2af";
+                    document.getElementById('role-badge').innerText = "👁️ VIEWER"; document.getElementById('role-badge').style.color = "#f9e2af";
                 }}
             }};
 
@@ -436,28 +349,10 @@ def dashboard():
             function changeSensor() {{
                 currentSensor = document.getElementById('sensor-select').value;
                 if(currentSensor) {{
-                    document.getElementById('dashboard-content').style.display = 'block';
-                    document.getElementById('sidebar-container').style.display = 'flex';
-                    document.getElementById('offline-alert').style.display = 'none';
-                    
-                    if(currentSensor === "☁️ SERVIDOR NUVEM (Virtual)") {{
-                        if(userRole === "admin") document.getElementById('admin-c2-panel').style.display = 'none';
-                        document.getElementById('remote-router').disabled = true;
-                        document.getElementById('remote-router').value = "N/A";
-                        document.getElementById('lateral-title').style.display = 'none';
-                        document.getElementById('lateral-subtitle').style.display = 'none';
-                    }} else {{
-                        if(userRole === "admin") document.getElementById('admin-c2-panel').style.display = 'block';
-                        document.getElementById('remote-router').disabled = false;
-                        document.getElementById('lateral-title').style.display = 'block';
-                        document.getElementById('lateral-subtitle').style.display = 'block';
-                    }}
-                    
+                    document.getElementById('dashboard-content').style.display = 'block'; document.getElementById('sidebar-container').style.display = 'flex'; document.getElementById('offline-alert').style.display = 'none';
                     fetchMasterData();
                 }} else {{
-                    document.getElementById('dashboard-content').style.display = 'none';
-                    document.getElementById('sidebar-container').style.display = 'none';
-                    document.getElementById('offline-alert').style.display = 'block';
+                    document.getElementById('dashboard-content').style.display = 'none'; document.getElementById('sidebar-container').style.display = 'none'; document.getElementById('offline-alert').style.display = 'block';
                 }}
             }}
             
@@ -466,24 +361,68 @@ def dashboard():
                 await fetch('/api/enviar_comando', {{ method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{sensor_id: currentSensor, comando: cmd}}) }});
                 
                 if(cmd === 'SCAN') {{
+                    document.getElementById('modal-title').innerText = "🔍 Scanner Remoto";
                     document.getElementById('scanner-modal').style.display = 'flex';
-                    document.getElementById('scanner-results').innerHTML = '<p style="text-align:center; color:#f9e2af;">Ordem enviada! Aguardando o Sensor processar a varredura local...</p>';
-                    if(scanInterval) clearInterval(scanInterval);
-                    scanInterval = setInterval(verificarScan, 2000);
+                    document.getElementById('scanner-results').innerHTML = '<p style="text-align:center; color:#a6e3a1;">Ordem enviada! Aguardando o Sensor varrer a rede local...</p>';
+                    if(scanInterval) clearInterval(scanInterval); scanInterval = setInterval(verificarScan, 2000);
                 }}
+                
+                // NOVO: TRATAMENTO DO COMANDO DE LOGS
+                if(cmd === 'GET_LOGS') {{
+                    document.getElementById('modal-title').innerText = "📄 Extração Forense Remota";
+                    document.getElementById('scanner-modal').style.display = 'flex';
+                    document.getElementById('scanner-results').innerHTML = '<p style="text-align:center; color:#cba6f7;">Avisando o Sensor para ler seu Banco de Dados Local... O download do PDF iniciará automaticamente.</p>';
+                    if(logsInterval) clearInterval(logsInterval); logsInterval = setInterval(verificarLogs, 2000);
+                }}
+            }}
+
+            async function verificarLogs() {{
+                const res = await fetch('/api/ler_logs?sensor_id=' + currentSensor);
+                const data = await res.json();
+                if(data.status === "pronto") {{
+                    clearInterval(logsInterval);
+                    document.getElementById('scanner-modal').style.display = 'none';
+                    gerarPDF(data.logs);
+                }}
+            }}
+
+            // MOTOR DE GERAÇÃO DE PDF NO NAVEGADOR
+            async function gerarPDF(logsData) {{
+                if(logsData.length === 0) return alert("O sensor informou que seu Banco de Dados local está vazio.");
+
+                const { jsPDF } = window.jspdf; const doc = new jsPDF('landscape');
+                doc.setFillColor(49, 50, 68); doc.rect(0, 0, doc.internal.pageSize.width, 25, 'F');
+                doc.setTextColor(255, 255, 255); doc.setFontSize(16); doc.setFont("helvetica", "bold");
+                doc.text(`Network Analyzer PRO - Extracao Remota [${currentSensor}]`, 14, 16);
+                
+                const tableData = logsData.map(log => {{
+                    let cleanMessage = log.message.replace(/\[Status no momento: (.*?)\]/g, '\\n>> Latências: $1');
+                    return [log.time, log.level.toUpperCase(), cleanMessage];
+                }});
+
+                doc.autoTable({{
+                    startY: 35, head: [['Data / Hora', 'Nível', 'Descrição do Evento (Registrado Localmente)']], body: tableData, theme: 'grid',
+                    styles: {{ fontSize: 9, cellPadding: 3 }}, headStyles: {{ fillColor: [49, 50, 68] }},
+                    willDrawCell: function (data) {{
+                        if (data.section === 'body' && data.column.index === 1) {{
+                            if (data.cell.raw === 'ERROR') doc.setTextColor(220, 53, 69);
+                            else if (data.cell.raw === 'WARNING') doc.setTextColor(253, 126, 20);
+                            else doc.setTextColor(13, 110, 253);
+                        }}
+                        if (data.section === 'body' && data.column.index === 2) doc.setTextColor(60);
+                    }}
+                }});
+                
+                let dataHoje = new Date().toISOString().split('T')[0];
+                doc.save(`Relatorio_Remoto_${currentSensor}_${dataHoje}.pdf`);
             }}
             
             async function enviarNovaConfig() {{
                 if(!currentSensor) return;
                 const r_ip = document.getElementById('remote-router').value;
                 const e_tg = document.getElementById('remote-externals').value;
-                
-                await fetch('/api/enviar_comando', {{ 
-                    method: 'POST', 
-                    headers: {{'Content-Type': 'application/json'}}, 
-                    body: JSON.stringify({{sensor_id: currentSensor, comando: "UPDATE_CONFIG", router_ip: r_ip, external_targets: e_tg}}) 
-                }});
-                alert("Ordem enviada! Alvos atualizados com sucesso.");
+                await fetch('/api/enviar_comando', {{ method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{sensor_id: currentSensor, comando: "UPDATE_CONFIG", router_ip: r_ip, external_targets: e_tg}}) }});
+                alert("Ordem enviada! Sensor aplicará em instantes.");
             }}
 
             function confirmarDesinstalacao() {{
@@ -511,32 +450,23 @@ def dashboard():
                 try {{
                     const res = await fetch('/api/sensores');
                     const masterData = await res.json();
-                    
                     const sensores_dados = masterData.sensores || {{}};
                     const alertas_dados = masterData.alertas || [];
                     
                     const alertasTbody = document.getElementById('global-alerts-body');
-                    if(alertas_dados.length === 0) {{
-                        alertasTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#a6e3a1; font-weight:bold;">Tudo OK! Nenhuma falha detectada.</td></tr>';
+                    if(alertas_dados.length === 0) {{ alertasTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#a6e3a1; font-weight:bold;">Tudo OK! Nenhuma falha detectada.</td></tr>';
                     }} else {{
                         alertasTbody.innerHTML = '';
                         alertas_dados.forEach(alerta => {{
                             const corClasse = alerta.level === 'error' ? 'alert-error' : 'alert-warning';
-                            alertasTbody.innerHTML += `<tr>
-                                <td>${{alerta.time}}</td>
-                                <td><span class="sensor-badge">${{alerta.sensor_id}}</span></td>
-                                <td class="${{corClasse}}">${{alerta.msg}}</td>
-                            </tr>`;
+                            alertasTbody.innerHTML += `<tr><td>${{alerta.time}}</td><td><span class="sensor-badge">${{alerta.sensor_id}}</span></td><td class="${{corClasse}}">${{alerta.msg}}</td></tr>`;
                         }});
                     }}
 
                     const select = document.getElementById('sensor-select');
                     const oldVal = select.value;
                     let optionsHTML = '<option value="">-- Selecione uma Máquina --</option>';
-                    for(const s_id in sensores_dados) {{
-                        let icone = s_id.includes("NUVEM") ? "☁️" : "🟢";
-                        optionsHTML += `<option value="${{s_id}}">${{icone}} Sensor Online: ${{s_id}}</option>`;
-                    }}
+                    for(const s_id in sensores_dados) optionsHTML += `<option value="${{s_id}}">🟢 Online: ${{s_id}}</option>`;
                     if(Object.keys(sensores_dados).length === 0) optionsHTML = '<option value="">🔴 Nenhum sensor online</option>';
                     
                     select.innerHTML = optionsHTML;
@@ -544,17 +474,12 @@ def dashboard():
 
                     if(currentSensor && sensores_dados[currentSensor]) {{
                         const sData = sensores_dados[currentSensor].data;
-                        
-                        if(document.activeElement.id !== 'remote-router' && currentSensor !== "☁️ SERVIDOR NUVEM (Virtual)") 
-                            document.getElementById('remote-router').value = sData.config.router_ip;
-                        if(document.activeElement.id !== 'remote-externals') 
-                            document.getElementById('remote-externals').value = sData.config.external_targets.join(', ');
+                        if(document.activeElement.id !== 'remote-router') document.getElementById('remote-router').value = sData.config.router_ip;
+                        if(document.activeElement.id !== 'remote-externals') document.getElementById('remote-externals').value = sData.config.external_targets.join(', ');
                         
                         const diagBox = document.getElementById('diag-box');
                         diagBox.innerText = sData.diagnostics;
-                        if (sData.diagnostics.includes("LOOP")) diagBox.className = "status-box warning";
-                        else if (sData.diagnostics.includes("FALHA")) diagBox.className = "status-box error";
-                        else diagBox.className = "status-box ok";
+                        if (sData.diagnostics.includes("LOOP")) diagBox.className = "status-box warning"; else if (sData.diagnostics.includes("FALHA")) diagBox.className = "status-box error"; else diagBox.className = "status-box ok";
 
                         const targetsContainer = document.getElementById('targets-container');
                         targetsContainer.innerHTML = '';
@@ -589,8 +514,7 @@ def dashboard():
                 }} catch (e) {{ console.error(e); }}
             }}
 
-            initChart();
-            setInterval(fetchMasterData, 1000);
+            initChart(); setInterval(fetchMasterData, 1000);
         </script>
     </body>
     </html>
