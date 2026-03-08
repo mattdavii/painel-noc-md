@@ -7,8 +7,8 @@ app = Flask(__name__)
 
 # --- CONFIGURAÇÕES DE ALERTAS (TELEGRAM) ---
 # Crie um bot no BotFather do Telegram e pegue seu Chat ID
-TELEGRAM_TOKEN = "" # Ex: "8611160616:AAEYnOAXG-EInv4yDYSje5J_K0XbO6jIee0"
-TELEGRAM_CHAT_ID = "" # Ex: "-5147163793"
+TELEGRAM_TOKEN = "8611160616:AAEYnOAXG-EInv4yDYSje5J_K0XbO6jIee0"
+TELEGRAM_CHAT_ID = "-5147163793"
 
 def notificar_telegram(mensagem):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return
