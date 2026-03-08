@@ -50,7 +50,6 @@ def registrar_alerta(sensor_id, msg, level="warning"):
         if msg in ultimo_msg or ultimo_msg in msg:
             return
     hora_brasil = datetime.utcnow() - timedelta(hours=3)
-    # Adicionamos um ID único para o Front-end saber quando apitar o alarme
     novo_id = int(time.time() * 1000)
     eventos_criticos.append({
         "id": novo_id,
@@ -143,7 +142,7 @@ def ler_logs():
 @app.route('/manifest.json')
 def serve_manifest():
     manifest = {
-        "name": "Network Analyzer PRO", "short_name": "NOC MD", "start_url": "/", "display": "standalone", "orientation": "any",  
+        "name": "Network Analyzer PRO", "short_name": "NetAnalyzer", "start_url": "/", "display": "standalone", "orientation": "any",  
         "background_color": "#1e1e2e", "theme_color": "#89b4fa",
         "icons": [{"src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iIzFlMWUyZSIvPjxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjQwIiBmaWxsPSJub25lIiBzdHJva2U9IiM4OWI0ZmEiIHN0cm9rZS13aWR0aD0iOCIvPjxwb2x5bGluZSBwb2ludHM9IjMwLDUwIDQ1LDY1IDcwLDM1IiBmaWxsPSJub25lIiBzdHJva2U9IiNhNmUzYTEiIHN0cm9rZS13aWR0aD0iOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+", "sizes": "192x192", "type": "image/svg+xml"}]
     }
@@ -156,7 +155,7 @@ def serve_sw():
     response.headers['Content-Type'] = 'application/javascript'
     return response
 
-# --- FRONT-END CENTRAL 2.0 (ENTERPRISE) ---
+# --- FRONT-END CENTRAL 2.0 ---
 @app.route('/')
 def dashboard():
     html = """
@@ -165,7 +164,7 @@ def dashboard():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <title>NOC Enterprise - MD Soluções</title>
+        <title>Network Analyzer PRO - Central</title>
         <link rel="manifest" href="/manifest.json">
         
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
@@ -224,7 +223,7 @@ def dashboard():
             .sla-text { font-size: 0.8em; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px;}
             .card-footer { display: flex; justify-content: space-between; font-size: 0.85em; color: var(--text-muted); border-top: 1px solid var(--border); padding-top: 10px;}
 
-            /* LAYOUT DE DETALHES (NOC ANTIGO) */
+            /* LAYOUT DE DETALHES */
             .noc-layout { display: grid; grid-template-columns: 3fr 1fr; gap: 20px; align-items: start;}
             .main-panel { background: var(--bg-panel); padding: 25px; border-radius: 12px; border: 1px solid var(--border); }
             .side-panel { background: transparent; display: flex; flex-direction: column; gap: 15px; position: sticky; top: 90px; align-self: start; }
@@ -275,7 +274,7 @@ def dashboard():
         <div id="login-overlay">
             <div class="login-box">
                 <div style="font-size: 3em; color: var(--accent-blue); margin-bottom: 10px;"><i class="fa-solid fa-shield-halved"></i></div>
-                <h2 style="color: var(--text-main); margin-top:0;">Acesso NOC</h2>
+                <h2 style="color: var(--text-main); margin-top:0;">Acesso Central</h2>
                 <input type="text" id="login-user" placeholder="Usuário" autocomplete="off">
                 <input type="password" id="login-pass" placeholder="Senha" autocomplete="off" onkeypress="if(event.key === 'Enter') doLogin();">
                 <button class="action-btn btn-save" onclick="doLogin()"><i class="fa-solid fa-right-to-bracket"></i> Autenticar</button>
@@ -292,7 +291,7 @@ def dashboard():
         </div>
 
         <nav class="navbar" id="top-navbar" style="display:none;">
-            <div class="nav-brand"><i class="fa-solid fa-network-wired"></i> NOC Enterprise</div>
+            <div class="nav-brand"><i class="fa-solid fa-network-wired"></i> Network Analyzer PRO</div>
             <div class="nav-controls">
                 <div id="role-badge" style="font-size:0.8em; padding:5px 10px; background:var(--bg-card); border: 1px solid var(--border); border-radius:4px; font-weight:bold; color: var(--accent-green);"></div>
                 <button class="btn-icon" id="btn-overview" onclick="showOverview()" style="display:none;" title="Visão Geral"><i class="fa-solid fa-grip"></i> Visão Geral</button>
@@ -400,7 +399,7 @@ def dashboard():
                     const osc = audioCtx.createOscillator();
                     const gainNode = audioCtx.createGain();
                     osc.type = 'square';
-                    osc.frequency.setValueAtTime(800, audioCtx.currentTime); // Frequência de Bip
+                    osc.frequency.setValueAtTime(800, audioCtx.currentTime);
                     osc.frequency.exponentialRampToValueAtTime(300, audioCtx.currentTime + 0.2); 
                     gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
                     gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
@@ -408,16 +407,15 @@ def dashboard():
                     gainNode.connect(audioCtx.destination);
                     osc.start();
                     osc.stop(audioCtx.currentTime + 0.3);
-                } catch(e) { console.log("Áudio bloqueado pelo navegador."); }
+                } catch(e) { console.log("Áudio bloqueado."); }
             }
 
-            // --- VARIÁVEIS DO SISTEMA ---
+            // --- VARIÁVEIS ---
             let authUser = ""; let authPass = ""; let userRole = ""; 
             let currentSensor = ""; let mainChart = null; let fetchInterval = null;
             let isConfigUpdating = false; 
             const colorPalette = ['#89b4fa', '#f9e2af', '#cba6f7', '#94e2d5', '#fab387', '#f38ba8'];
 
-            // TEMA E FULLSCREEN
             function toggleTheme() {
                 const body = document.body;
                 if (body.getAttribute('data-theme') === 'light') body.removeAttribute('data-theme');
@@ -428,7 +426,6 @@ def dashboard():
                 else if (document.exitFullscreen) document.exitFullscreen();
             }
 
-            // --- LOGIN ---
             async function doLogin() {
                 const u = document.getElementById('login-user').value;
                 const p = document.getElementById('login-pass').value;
@@ -454,9 +451,7 @@ def dashboard():
                         document.getElementById('role-badge').style.color = "var(--accent-yellow)";
                     }
                     
-                    // Inicializa o motor de áudio ao clicar no botão de login (Regra do Chrome)
                     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                    
                     fetchMasterData();
                     fetchInterval = setInterval(fetchMasterData, 1500);
                 } else { err.style.display = 'block'; }
@@ -474,13 +469,12 @@ def dashboard():
 
             function getHeaders() { return { 'Content-Type': 'application/json', 'X-Auth-User': authUser, 'X-Auth-Pass': authPass }; }
             
-            // --- NAVEGAÇÃO ---
             function showOverview() {
                 currentSensor = "";
                 document.getElementById('detail-view').style.display = 'none';
                 document.getElementById('overview-view').style.display = 'block';
                 document.getElementById('btn-overview').style.display = 'none';
-                fetchMasterData(); // Força update imediato
+                fetchMasterData();
             }
 
             function selectSensor(id) {
@@ -505,7 +499,6 @@ def dashboard():
                 mainChart = new Chart(ctx, { type: 'line', data: { labels: [], datasets: [] }, options: { responsive: true, maintainAspectRatio: false, animation: { duration: 0 }, scales: { y: { beginAtZero: true, grid: { color: 'rgba(69, 71, 90, 0.3)' } }, x: { grid: { color: 'rgba(69, 71, 90, 0.3)' } } } } });
             }
 
-            // --- FUNÇÕES DE COMANDO (C2) ---
             async function enviarNovaConfig() {
                 if(!currentSensor) return;
                 isConfigUpdating = true;
@@ -565,7 +558,7 @@ def dashboard():
                 const { jsPDF } = window.jspdf; const doc = new jsPDF('landscape');
                 doc.setFillColor(49, 50, 68); doc.rect(0, 0, doc.internal.pageSize.width, 25, 'F');
                 doc.setTextColor(255, 255, 255); doc.setFontSize(16); doc.setFont("helvetica", "bold");
-                doc.text(`NOC Enterprise - Relatorio Forense [${currentSensor}]`, 14, 16);
+                doc.text(`Network Analyzer PRO - Relatorio Forense [${currentSensor}]`, 14, 16);
                 
                 const tableData = logsData.map(log => [log.time, log.level.toUpperCase(), log.message.replace(/\[Status no momento: (.*?)\]/g, '\\n>> Latências: $1')]);
                 doc.autoTable({
@@ -579,13 +572,12 @@ def dashboard():
                         }
                     }
                 });
-                doc.save(`NOC_${currentSensor}_${new Date().toISOString().split('T')[0]}.pdf`);
+                doc.save(`Relatorio_Rede_${currentSensor}_${new Date().toISOString().split('T')[0]}.pdf`);
             }
 
             function confirmarDesinstalacao() { if(confirm("Deseja explodir o sensor remotamente?")) { enviarComando('UNINSTALL'); alert("Ordem enviada."); } }
             async function limparAlertasGlobais() { await fetch('/api/limpar_alertas', { method: 'POST', headers: getHeaders() }); }
 
-            // --- MOTOR PRINCIPAL ---
             async function fetchMasterData() {
                 try {
                     const res = await fetch('/api/sensores', { headers: getHeaders() });
@@ -595,18 +587,16 @@ def dashboard():
                     const sensores_dados = masterData.sensores || {};
                     const alertas_dados = masterData.alertas || [];
                     
-                    document.getElementById('total-sensors-count').innerText = `${Object.keys(sensores_dados).length} Usinas Operantes`;
+                    document.getElementById('total-sensors-count').innerText = `${Object.keys(sensores_dados).length} Sensores Ativos`;
 
-                    // LÓGICA DO ALARME SONORO
                     if (alertas_dados.length > 0) {
                         const alertRecente = alertas_dados[0];
                         if (alertRecente.level === 'error' && alertRecente.id !== lastAlertId) {
                             lastAlertId = alertRecente.id;
-                            playAlarm(); // Bip do Radar!
+                            playAlarm(); 
                         }
                     }
 
-                    // ATUALIZA TABELA DE ALERTAS
                     const alertasTbody = document.getElementById('global-alerts-body');
                     if(alertas_dados.length === 0) { alertasTbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--accent-green);"><i class="fa-solid fa-check-circle"></i> Rede Global Estável.</td></tr>';
                     } else {
@@ -619,7 +609,6 @@ def dashboard():
                         });
                     }
 
-                    // --- MODO VISÃO GERAL (CARDS) ---
                     if (!currentSensor) {
                         const grid = document.getElementById('overview-grid');
                         grid.innerHTML = '';
@@ -649,7 +638,6 @@ def dashboard():
                             }
                         }
                     } 
-                    // --- MODO DETALHES (SENSOR ESPECÍFICO) ---
                     else if (sensores_dados[currentSensor]) {
                         const sData = sensores_dados[currentSensor].data;
                         
@@ -665,7 +653,6 @@ def dashboard():
                         else if (sData.diagnostics.includes("INSTABILIDADE") || sData.diagnostics.includes("INTERNET")) diagBox.innerHTML = `<div class="led led-yellow"></div> <i class="fa-solid fa-cloud-bolt"></i> ${sData.diagnostics}`; 
                         else diagBox.innerHTML = `<div class="led led-green"></div> <i class="fa-solid fa-check-double"></i> ${sData.diagnostics}`;
 
-                        // Ajuste de classes de cor para o DiagBox
                         if (sData.diagnostics.includes("LOOP") || sData.diagnostics.includes("FALHA")) diagBox.className = "status-box error";
                         else if (sData.diagnostics.includes("INSTABILIDADE") || sData.diagnostics.includes("INTERNET")) diagBox.className = "status-box warning";
                         else diagBox.className = "status-box ok";
@@ -700,7 +687,7 @@ def dashboard():
                             mainChart.data.datasets = newDatasets;
                             mainChart.update();
                         }
-                    } else { showOverview(); } // Se o sensor morrer enquanto você estiver olhando pra ele, volta pro radar
+                    } else { showOverview(); }
                 } catch (e) {}
             }
         </script>
