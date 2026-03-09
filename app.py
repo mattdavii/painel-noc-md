@@ -397,18 +397,22 @@ def dashboard():
                 if (!document.fullscreenElement) document.documentElement.requestFullscreen(); else if (document.exitFullscreen) document.exitFullscreen();
             }
 
-            async function doLogin() {
+           async function doLogin() {
                 const u = document.getElementById('login-user').value; const p = document.getElementById('login-pass').value;
                 const res = await fetch('/api/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({user:u, pass:p}) });
                 if(res.status === 200) {
                     const data = await res.json(); authUser = u; authPass = p; userRole = data.role;
                     document.getElementById('login-overlay').style.display = 'none'; document.getElementById('top-navbar').style.display = 'flex'; document.getElementById('overview-view').style.display = 'block';
+                    
                     if(userRole === "admin") {
                         document.getElementById('role-badge').innerHTML = '<i class="fa-solid fa-user-shield"></i> ADMIN'; 
+                        document.getElementById('admin-config-panel').style.display = "block"; // <-- PAINEL DE IPs DE VOLTA!
                         document.getElementById('admin-c2-panel').style.display = "block"; 
+                        if(document.getElementById('btn-clear-alerts')) document.getElementById('btn-clear-alerts').style.display = "block";
                     } else {
                         document.getElementById('role-badge').innerHTML = '<i class="fa-solid fa-eye"></i> VIEWER'; 
                     }
+                    
                     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                     fetchMasterData(); fetchInterval = setInterval(fetchMasterData, 1500);
                 } else { document.getElementById('login-err').style.display = 'block'; }
@@ -601,4 +605,5 @@ def dashboard():
     return html
 
 if __name__ == '__main__':
+
     app.run(host='0.0.0.0', port=10000)
