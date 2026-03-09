@@ -6,8 +6,8 @@ import requests
 app = Flask(__name__)
 
 # --- CONFIGURAÇÕES DE ALERTAS (TELEGRAM) ---
-TELEGRAM_TOKEN = "" # Ex: "8611160616:AAEYnOAXG-EInv4yDYSje5J_K0XbO6jIee0"
-TELEGRAM_CHAT_ID = "" # Ex: "-5147163793"
+TELEGRAM_TOKEN = "8611160616:AAEYnOAXG-EInv4yDYSje5J_K0XbO6jIee0"
+TELEGRAM_CHAT_ID = "-5147163793"
 
 def notificar_telegram(mensagem):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return
@@ -645,3 +645,4 @@ def dashboard():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
+
