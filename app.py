@@ -6,8 +6,8 @@ import requests
 app = Flask(__name__)
 
 # --- CONFIGURAÇÕES DE ALERTAS (TELEGRAM) ---
-TELEGRAM_TOKEN = "7182937465:AAH_xlKjeRtfdsg8f7dsg87sdf" 
-TELEGRAM_CHAT_ID = "-100987654321" 
+TELEGRAM_TOKEN = "" # Ex: "8611160616:AAEYnOAXG-EInv4yDYSje5J_K0XbO6jIee0"
+TELEGRAM_CHAT_ID = "" # Ex: "-5147163793"
 
 def notificar_telegram(mensagem):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return
@@ -146,7 +146,7 @@ def ler_scan():
 @app.route('/api/ler_logs')
 def ler_logs():
     s_id = request.args.get("sensor_id")
-    if s_id in resultados_logs: return jsonify({"status": "pronto", "logs": resultados_logs[s_id]})
+    if s_id in resultados_logs: return jsonify({"status": "pronto", "logs": logs_data[s_id]})
     return jsonify({"status": "aguardando"})
 
 @app.route('/api/ler_speedtest')
@@ -327,11 +327,11 @@ def dashboard():
                             <div style="display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
                                 <div class="input-group">
                                     <label>Gateway / Roteador</label>
-                                    <input type="text" id="remote-router" placeholder="Ex: 192.168.0.1">
+                                    <input type="text" id="remote-router" placeholder="Ex: 192.168.0.1" oninput="this.dataset.dirty='true'">
                                 </div>
                                 <div class="input-group" style="flex:2;">
                                     <label>Alvos a Monitorar</label>
-                                    <input type="text" id="remote-externals" placeholder="Ex: google.com, 8.8.8.8">
+                                    <input type="text" id="remote-externals" placeholder="Ex: google.com, 8.8.8.8" oninput="this.dataset.dirty='true'">
                                 </div>
                                 <button id="btn-aplicar" class="action-btn btn-save" onclick="enviarNovaConfig()" style="width: auto; margin-bottom:0;"><i class="fa-solid fa-floppy-disk"></i> Aplicar</button>
                             </div>
@@ -418,7 +418,6 @@ def dashboard():
                     const data = await res.json(); authUser = u; authPass = p; userRole = data.role;
                     document.getElementById('login-overlay').style.display = 'none'; document.getElementById('top-navbar').style.display = 'flex'; document.getElementById('overview-view').style.display = 'block';
                     
-                    // AQUI ELE LIBERA AS FUNÇÕES DE ADMIN NOVAMENTE!
                     if(userRole === "admin") {
                         document.getElementById('role-badge').innerHTML = '<i class="fa-solid fa-user-shield"></i> ADMIN'; 
                         document.getElementById('admin-config-panel').style.display = "block"; 
@@ -450,16 +449,23 @@ def dashboard():
                 mainChart = new Chart(ctx, { type: 'line', data: { labels: [], datasets: [] }, options: { responsive: true, maintainAspectRatio: false, animation: { duration: 0 }, scales: { y: { beginAtZero: true, grid: { color: 'rgba(69, 71, 90, 0.3)' } }, x: { grid: { color: 'rgba(69, 71, 90, 0.3)' } } } } });
             }
             
+            // --- A MÁGICA QUE MATA O BUMERANGUE DE VEZ ---
             async function enviarNovaConfig() {
                 if(!currentSensor) return;
                 isConfigUpdating = true;
                 const btn = document.getElementById('btn-aplicar');
                 btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Aplicando...'; btn.disabled = true;
-                const r_ip = document.getElementById('remote-router').value;
-                const e_tg = document.getElementById('remote-externals').value;
-                const res = await fetch('/api/enviar_comando', { method: 'POST', headers: getHeaders(), body: JSON.stringify({sensor_id: currentSensor, comando: "UPDATE_CONFIG", router_ip: r_ip, external_targets: e_tg}) });
+                
+                const r_ip = document.getElementById('remote-router');
+                const e_tg = document.getElementById('remote-externals');
+                
+                const res = await fetch('/api/enviar_comando', { method: 'POST', headers: getHeaders(), body: JSON.stringify({sensor_id: currentSensor, comando: "UPDATE_CONFIG", router_ip: r_ip.value, external_targets: e_tg.value}) });
                 if(res.status === 401) return lockScreen();
-                setTimeout(() => { isConfigUpdating = false; btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Aplicar'; btn.disabled = false; }, 4000);
+                
+                r_ip.dataset.dirty = ""; 
+                e_tg.dataset.dirty = "";
+                
+                setTimeout(() => { isConfigUpdating = false; btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Aplicar'; btn.disabled = false; }, 8000);
             }
 
             async function enviarComando(cmd) {
@@ -583,9 +589,13 @@ def dashboard():
                     else if (sensores_dados[currentSensor]) {
                         const sData = sensores_dados[currentSensor].data;
                         
+                        // --- IMPEDE O OVERWRITE DA CAIXINHA DE TEXTO ---
                         if(!isConfigUpdating) {
-                            if(document.activeElement.id !== 'remote-router') document.getElementById('remote-router').value = sData.config.router_ip;
-                            if(document.activeElement.id !== 'remote-externals') document.getElementById('remote-externals').value = sData.config.external_targets.join(', ');
+                            const elRouter = document.getElementById('remote-router');
+                            const elExt = document.getElementById('remote-externals');
+                            
+                            if(document.activeElement.id !== 'remote-router' && !elRouter.dataset.dirty) elRouter.value = sData.config.router_ip;
+                            if(document.activeElement.id !== 'remote-externals' && !elExt.dataset.dirty) elExt.value = sData.config.external_targets.join(', ');
                         }
                         
                         if(sData.hardware) {
