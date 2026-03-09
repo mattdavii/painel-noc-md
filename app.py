@@ -1,14 +1,13 @@
 from flask import Flask, jsonify, request, make_response, render_template_string
 from datetime import datetime, timedelta
 import time
-import requests # Necessário para o Telegram
+import requests
 
 app = Flask(__name__)
 
 # --- CONFIGURAÇÕES DE ALERTAS (TELEGRAM) ---
-# Crie um bot no BotFather do Telegram e pegue seu Chat ID
-TELEGRAM_TOKEN = "8611160616:AAEYnOAXG-EInv4yDYSje5J_K0XbO6jIee0"
-TELEGRAM_CHAT_ID = "-5147163793"
+TELEGRAM_TOKEN = "7182937465:AAH_xlKjeRtfdsg8f7dsg87sdf" 
+TELEGRAM_CHAT_ID = "-100987654321" 
 
 def notificar_telegram(mensagem):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return
@@ -64,7 +63,6 @@ def registrar_alerta(sensor_id, msg, level="warning"):
     novo_id = int(time.time() * 1000)
     eventos_criticos.append({"id": novo_id, "time": hora_brasil.strftime("%d/%m %H:%M:%S"), "sensor_id": sensor_id, "msg": msg, "level": level})
     
-    # DISPARA TELEGRAM SE FOR ERRO CRÍTICO
     if level == "error": notificar_telegram(f"[{sensor_id}] {msg}")
         
     if len(eventos_criticos) > 50: eventos_criticos.pop(0)
@@ -82,7 +80,6 @@ def receber_dados():
     comando = comandos_pendentes.pop(sensor_id, None)
     return jsonify({"status": "sucesso", "comando": comando})
 
-# RECEPTORES DE DADOS ESPECÍFICOS (C2)
 @app.route('/api/receber_scan', methods=['POST'])
 def receber_scan():
     resultados_scan[request.json.get("sensor_id")] = request.json.get("devices", [])
@@ -140,7 +137,6 @@ def enviar_comando():
     if comando == "TRACEROUTE": resultados_traceroute.pop(sensor_id, None) 
     return jsonify({"status": "enviado"})
 
-# LEITORES DE DADOS (FRONT-END CONSULTANDO)
 @app.route('/api/ler_scan')
 def ler_scan():
     s_id = request.args.get("sensor_id")
@@ -165,7 +161,6 @@ def ler_traceroute():
     if s_id in resultados_traceroute: return jsonify({"status": "pronto", "route": resultados_traceroute[s_id]})
     return jsonify({"status": "aguardando"})
 
-# --- ROTAS DO PWA ---
 @app.route('/manifest.json')
 def serve_manifest():
     manifest = {
@@ -182,7 +177,6 @@ def serve_sw():
     response.headers['Content-Type'] = 'application/javascript'
     return response
 
-# --- FRONT-END CENTRAL 3.0 ---
 @app.route('/')
 def dashboard():
     html = """
@@ -269,6 +263,10 @@ def dashboard():
             .login-box { background: var(--bg-panel); padding: 40px; border-radius: 12px; border: 1px solid var(--border); width: 320px; text-align: center; }
             .login-box input { width: 100%; padding: 12px; margin-bottom: 20px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-card); color: var(--text-main); box-sizing: border-box;}
             
+            .input-group { display: flex; flex-direction: column; flex: 1; min-width: 150px; text-align:left;}
+            .input-group label { margin-bottom: 5px; font-size: 0.85em; color: var(--text-muted); font-weight: bold;}
+            input[type="text"], input[type="date"], select { padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-card); color: var(--text-main); font-family: 'Inter', sans-serif;}
+            
             #scanner-modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center; backdrop-filter: blur(5px);}
             .modal-content { background: var(--bg-panel); padding: 30px; border-radius: 12px; width: 80%; max-width: 800px; max-height: 80vh; overflow-y: auto; border: 1px solid var(--border);}
             
@@ -324,6 +322,21 @@ def dashboard():
                             <button class="action-btn" style="width: auto; padding: 8px 15px; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border);" onclick="showOverview()"><i class="fa-solid fa-arrow-left"></i> Voltar</button>
                         </div>
                         
+                        <div id="admin-config-panel" style="background: var(--bg-card); padding: 20px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 20px; display:none;">
+                            <h4 style="margin: 0 0 15px 0; color:var(--text-main);"><i class="fa-solid fa-sliders"></i> Alterar Configuração Remota</h4>
+                            <div style="display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
+                                <div class="input-group">
+                                    <label>Gateway / Roteador</label>
+                                    <input type="text" id="remote-router" placeholder="Ex: 192.168.0.1">
+                                </div>
+                                <div class="input-group" style="flex:2;">
+                                    <label>Alvos a Monitorar</label>
+                                    <input type="text" id="remote-externals" placeholder="Ex: google.com, 8.8.8.8">
+                                </div>
+                                <button id="btn-aplicar" class="action-btn btn-save" onclick="enviarNovaConfig()" style="width: auto; margin-bottom:0;"><i class="fa-solid fa-floppy-disk"></i> Aplicar</button>
+                            </div>
+                        </div>
+
                         <div class="hw-box" id="hw-box">
                             <span style="color:var(--text-muted);"><i class="fa-solid fa-microchip"></i> CPU: <span id="hw-cpu" style="color:var(--accent-blue);">--%</span></span>
                             <span style="color:var(--text-muted);"><i class="fa-solid fa-memory"></i> RAM: <span id="hw-ram" style="color:var(--accent-purple);">--%</span></span>
@@ -387,6 +400,7 @@ def dashboard():
 
             let authUser = ""; let authPass = ""; let userRole = ""; 
             let currentSensor = ""; let mainChart = null; let fetchInterval = null; let c2Interval = null;
+            let isConfigUpdating = false;
             const colorPalette = ['#89b4fa', '#f9e2af', '#cba6f7', '#94e2d5', '#fab387', '#f38ba8'];
 
             function toggleTheme() {
@@ -397,18 +411,18 @@ def dashboard():
                 if (!document.fullscreenElement) document.documentElement.requestFullscreen(); else if (document.exitFullscreen) document.exitFullscreen();
             }
 
-           async function doLogin() {
+            async function doLogin() {
                 const u = document.getElementById('login-user').value; const p = document.getElementById('login-pass').value;
                 const res = await fetch('/api/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({user:u, pass:p}) });
                 if(res.status === 200) {
                     const data = await res.json(); authUser = u; authPass = p; userRole = data.role;
                     document.getElementById('login-overlay').style.display = 'none'; document.getElementById('top-navbar').style.display = 'flex'; document.getElementById('overview-view').style.display = 'block';
                     
+                    // AQUI ELE LIBERA AS FUNÇÕES DE ADMIN NOVAMENTE!
                     if(userRole === "admin") {
                         document.getElementById('role-badge').innerHTML = '<i class="fa-solid fa-user-shield"></i> ADMIN'; 
-                        document.getElementById('admin-config-panel').style.display = "block"; // <-- PAINEL DE IPs DE VOLTA!
+                        document.getElementById('admin-config-panel').style.display = "block"; 
                         document.getElementById('admin-c2-panel').style.display = "block"; 
-                        if(document.getElementById('btn-clear-alerts')) document.getElementById('btn-clear-alerts').style.display = "block";
                     } else {
                         document.getElementById('role-badge').innerHTML = '<i class="fa-solid fa-eye"></i> VIEWER'; 
                     }
@@ -436,6 +450,18 @@ def dashboard():
                 mainChart = new Chart(ctx, { type: 'line', data: { labels: [], datasets: [] }, options: { responsive: true, maintainAspectRatio: false, animation: { duration: 0 }, scales: { y: { beginAtZero: true, grid: { color: 'rgba(69, 71, 90, 0.3)' } }, x: { grid: { color: 'rgba(69, 71, 90, 0.3)' } } } } });
             }
             
+            async function enviarNovaConfig() {
+                if(!currentSensor) return;
+                isConfigUpdating = true;
+                const btn = document.getElementById('btn-aplicar');
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Aplicando...'; btn.disabled = true;
+                const r_ip = document.getElementById('remote-router').value;
+                const e_tg = document.getElementById('remote-externals').value;
+                const res = await fetch('/api/enviar_comando', { method: 'POST', headers: getHeaders(), body: JSON.stringify({sensor_id: currentSensor, comando: "UPDATE_CONFIG", router_ip: r_ip, external_targets: e_tg}) });
+                if(res.status === 401) return lockScreen();
+                setTimeout(() => { isConfigUpdating = false; btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Aplicar'; btn.disabled = false; }, 4000);
+            }
+
             async function enviarComando(cmd) {
                 if(!currentSensor) return;
                 let payload = {sensor_id: currentSensor, comando: cmd};
@@ -447,7 +473,6 @@ def dashboard():
                 const res = await fetch('/api/enviar_comando', { method: 'POST', headers: getHeaders(), body: JSON.stringify(payload) });
                 if(res.status === 401) return lockScreen();
                 
-                // JANELA MODAL DE ESPERA
                 document.getElementById('scanner-modal').style.display = 'flex';
                 if(c2Interval) clearInterval(c2Interval);
                 
@@ -558,7 +583,11 @@ def dashboard():
                     else if (sensores_dados[currentSensor]) {
                         const sData = sensores_dados[currentSensor].data;
                         
-                        // Atualiza Hardware Stats
+                        if(!isConfigUpdating) {
+                            if(document.activeElement.id !== 'remote-router') document.getElementById('remote-router').value = sData.config.router_ip;
+                            if(document.activeElement.id !== 'remote-externals') document.getElementById('remote-externals').value = sData.config.external_targets.join(', ');
+                        }
+                        
                         if(sData.hardware) {
                             document.getElementById('hw-cpu').innerText = sData.hardware.cpu + "%";
                             document.getElementById('hw-ram').innerText = sData.hardware.ram + "%";
@@ -602,8 +631,7 @@ def dashboard():
     </body>
     </html>
     """
-    return html
+    return render_template_string(html)
 
 if __name__ == '__main__':
-
     app.run(host='0.0.0.0', port=10000)
